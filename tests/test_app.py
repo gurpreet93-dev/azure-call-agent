@@ -89,3 +89,17 @@ def test_speech_request_shape(monkeypatch):
     assert speech.synthesize("Bonjour", "fr-FR") == b"mp3"
     assert seen["url"] == "https://eastus2.tts.speech.microsoft.com/cognitiveservices/v1"
     assert seen["headers"]["Ocp-Apim-Subscription-Key"] == "k" and "fr-FR" in seen["body"]
+
+
+def test_password_protects_everything_but_health(monkeypatch):
+    monkeypatch.setattr(main, "settings", dataclasses.replace(main.settings, app_password="s3cret"))
+    c = TestClient(main.app)
+    assert c.get("/").status_code == 401 and "Basic" in c.get("/").headers["www-authenticate"]
+    assert c.post("/api/conversation").status_code == 401
+    assert c.get("/", auth=("anyone", "wrong")).status_code == 401
+    assert c.get("/", auth=("anyone", "s3cret")).status_code == 200
+    assert c.get("/health").status_code == 200
+
+
+def test_no_password_means_open(client):
+    assert client.get("/").status_code == 200

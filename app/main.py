@@ -1,8 +1,11 @@
 """One screen: speak to the Foundry agent and hear it answer, in the language you choose."""
+import base64
+import binascii
 import logging
+import secrets
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
@@ -12,6 +15,25 @@ from app.config import settings
 log = logging.getLogger(__name__)
 app = FastAPI(title="Foundry voice agent")
 STATIC = Path(__file__).parent / "static"
+
+
+def _password_ok(header: str | None) -> bool:
+    if not header or not header.startswith("Basic "):
+        return False
+    try:
+        _, _, given = base64.b64decode(header[6:]).decode("utf-8").partition(":")
+    except (binascii.Error, UnicodeDecodeError):
+        return False
+    return secrets.compare_digest(given.encode(), settings.app_password.encode())
+
+
+@app.middleware("http")
+async def require_password(request: Request, call_next):
+    """With APP_PASSWORD set, every page and API call needs it (except /health for Azure's probes)."""
+    if settings.app_password and request.url.path != "/health" and not _password_ok(request.headers.get("authorization")):
+        return Response("Password required", status_code=401,
+                        headers={"WWW-Authenticate": 'Basic realm="ClearView voice agent"'})
+    return await call_next(request)
 
 
 class ChatIn(BaseModel):

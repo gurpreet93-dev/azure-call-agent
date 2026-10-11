@@ -20,5 +20,11 @@ class Settings:
     # Multilingual neural voices speak any supported language with one voice.
     speech_voice: str = os.getenv("SPEECH_VOICE", "en-US-AvaMultilingualNeural").strip()
 
+    # Set on a public website so only people you give it to can use (and spend on) the agent.
+    # The browser shows its own sign-in box; any username, this password.
+    app_password: str = os.getenv("APP_PASSWORD", "")
+    # Azure App Service sets WEBSITE_SITE_NAME; there the app signs in with its managed identity.
+    on_app_service: bool = bool(os.getenv("WEBSITE_SITE_NAME"))
+
 
 settings = Settings()

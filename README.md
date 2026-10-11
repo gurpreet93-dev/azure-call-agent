@@ -95,6 +95,22 @@ what to fix when one fails.
 Add a Codespaces secret `FOUNDRY_API_KEY` (the Foundry key), create a codespace on `main`, then run
 `az login --use-device-code` before the two commands above.
 
+## 4. Put it on a website (Azure App Service)
+
+1. Azure portal → **Create a resource → Web App**. Resource group: the Foundry one. Name: e.g.
+   `clearview-voice-agent`. Publish: **Code**. Runtime: **Python 3.12**. OS: **Linux**. Region: **East US 2**.
+   Pricing plan: **Free F1** (enough for a demo). Create.
+2. Web app → **Settings → Environment variables**, add: `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_AGENT_NAME`,
+   `SPEECH_KEY`, `SPEECH_REGION`, `SPEECH_VOICE`, `APP_PASSWORD` (pick one), `WEBSITES_PORT` = `8000`. Apply.
+3. Web app → **Settings → Configuration → Startup command**:
+   `python -m uvicorn app.main:app --host 0.0.0.0 --port 8000`. Save.
+4. Web app → **Settings → Identity → System assigned → On**. Then Foundry resource → **Access control (IAM)** →
+   **Add role assignment → Azure AI User** → assign access to **Managed identity** → your web app. This is how the
+   site signs in to the agent: no keys or passwords for Foundry are stored anywhere.
+5. Web app → **Deployment Center** → Source **GitHub** → this repo, branch `main` → Save. Azure adds a GitHub
+   Actions workflow and deploys on every push.
+6. Open `https://<name>.azurewebsites.net`, sign in with any username and `APP_PASSWORD`.
+
 ## Settings (`.env`)
 
 | Setting | What it is |
@@ -104,6 +120,7 @@ Add a Codespaces secret `FOUNDRY_API_KEY` (the Foundry key), create a codespace 
 | `SPEECH_KEY` | Foundry resource key; blank = use `FOUNDRY_API_KEY` |
 | `SPEECH_REGION` | The resource's region (`eastus2`) |
 | `SPEECH_VOICE` | Azure neural voice; the default multilingual voice speaks every listed language |
+| `APP_PASSWORD` | Optional. When set, the site asks for it (any username). Set it on any public deployment |
 
 ## Notes
 

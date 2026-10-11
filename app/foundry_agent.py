@@ -19,7 +19,9 @@ class AgentNotConfigured(RuntimeError):
 
 @lru_cache(maxsize=1)
 def credential() -> DefaultAzureCredential:
-    return DefaultAzureCredential(exclude_interactive_browser_credential=False)
+    # Locally a browser window can open to sign in; on App Service the managed identity is used instead
+    # (a server has no browser, so the pop-up option would only stall requests there).
+    return DefaultAzureCredential(exclude_interactive_browser_credential=settings.on_app_service)
 
 
 @lru_cache(maxsize=1)
