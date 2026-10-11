@@ -207,3 +207,15 @@ def test_speech_sdk_is_served_with_the_page(client):
     assert "/static/vendor/speech-sdk-1.51.0.min.js" in client.get("/").text
     r = client.get("/static/vendor/speech-sdk-1.51.0.min.js")
     assert r.status_code == 200 and "SpeechSDK" in r.text
+
+
+def test_rate_limit_gives_a_plain_message(client, monkeypatch):
+    import httpx
+    import openai
+
+    def limited(cid, text):
+        raise openai.RateLimitError("Error code: 429 - rate_limit_exceeded", response=httpx.Response(
+            429, request=httpx.Request("POST", "https://x")), body=None)
+    monkeypatch.setattr(foundry_agent, "ask", limited)
+    r = client.post("/api/chat", json={"conversation_id": "c", "text": "hi"})
+    assert r.status_code == 429 and "tokens-per-minute" in r.json()["detail"]

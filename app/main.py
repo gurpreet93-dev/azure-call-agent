@@ -5,6 +5,7 @@ import logging
 import secrets
 from pathlib import Path
 
+import openai
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -78,6 +79,10 @@ def start_conversation():
 def chat(body: ChatIn):
     try:
         return {"reply": foundry_agent.ask(body.conversation_id, body.text)}
+    except openai.RateLimitError as exc:
+        log.warning("gpt-4o rate limit: %s", exc)
+        raise HTTPException(429, "The model is over its tokens-per-minute limit. Wait about a minute and try again, "
+                                 "or raise the gpt-4o deployment's rate limit in Foundry.") from exc
     except Exception as exc:
         log.exception("Foundry agent call failed")
         raise HTTPException(502, f"The Foundry agent didn't answer: {exc}") from exc

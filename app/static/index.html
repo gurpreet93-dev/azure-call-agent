@@ -181,6 +181,14 @@ async function send(text) {
 }
 function interrupt() { if (speaking && finishSpeaking) finishSpeaking(true); }
 
+// Sentences said within a second of each other ("बताओ बताओ। अरे, गर्मी…") become one turn, not two agent calls.
+let heardBuffer = [], heardTimer = null;
+function queueUtterance(t) {
+  heardBuffer.push(t);
+  clearTimeout(heardTimer);
+  heardTimer = setTimeout(() => { const all = heardBuffer.join(' '); heardBuffer = []; send(all); }, 1200);
+}
+
 // ---------- listening: one continuous Azure Speech session for the whole call ----------
 // The mic stream has echo cancellation on, so the agent's own voice is mostly removed before recognition;
 // anything that still sounds like the reply is ignored by isEcho(). The caller's words interrupt the reply.
@@ -206,7 +214,7 @@ async function startSession() {
     if (!t || (speaking && isEcho(t))) return;
     try { setLanguage(SDK.AutoDetectSourceLanguageResult.fromResult(e.result).language, 'detected from your voice'); } catch {}
     if (speaking) interrupt();
-    send(t);
+    queueUtterance(t);
   };
   recognizer.canceled = (_, e) => {
     log('sys err', 'Speech recognition stopped: ' + (e.errorDetails || e.reason));
