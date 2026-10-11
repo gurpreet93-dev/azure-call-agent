@@ -2,6 +2,8 @@
 import base64
 import binascii
 import logging
+import os
+import re
 import secrets
 from pathlib import Path
 
@@ -118,12 +120,25 @@ def setup_page():
     return FileResponse(STATIC / "setup.html")
 
 
+def _secret_fingerprint() -> dict:
+    """Enough to tell which client secret this deployment holds, without revealing it. Azure's portal shows the
+    first three characters of each secret's Value, so they can be compared there."""
+    raw = os.environ.get("AZURE_CLIENT_SECRET", "")
+    v = raw.strip()
+    return {"deployed_commit": (os.environ.get("VERCEL_GIT_COMMIT_SHA") or "")[:7] or None,
+            "client_id": os.environ.get("AZURE_CLIENT_ID") or None,
+            "secret_set": bool(v), "secret_length": len(v), "secret_starts_with": v[:3] or None,
+            "secret_has_spaces_or_newlines": raw != v or any(c.isspace() for c in v),
+            "looks_like_secret_id_not_value": bool(re.fullmatch(r"[0-9a-fA-F-]{36}", v))}
+
+
 @app.get("/api/calendar-status")
 def calendar_status():
     from app import booking, gcal
     status = {"calendar": booking.calendar_name(), "google_configured": gcal.configured(),
               "contractor_email": settings.contractor_email or None, "timezone": settings.business_tz,
               "visit_hours": f"{settings.work_days} {settings.business_hours}"}
+    status["azure_sign_in"] = _secret_fingerprint()
     if gcal.configured():
         try:
             status["slots_tomorrow"] = len(booking.free_slots(booking.now().date() + booking.timedelta(days=1)))
