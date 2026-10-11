@@ -1,8 +1,8 @@
 """The call agent: one Claude tool-use loop per caller utterance.
 
-Claude is reached through Microsoft Foundry (LLM_PROVIDER=foundry, the default) or the
-Anthropic API directly (LLM_PROVIDER=anthropic). Both expose the same Messages API, so the
-loop below is identical either way.
+The model is GPT on Azure OpenAI (LLM_PROVIDER=azure-openai, the default), Claude on Microsoft
+Foundry (foundry) or Claude on the Anthropic API (anthropic). Every client exposes the same
+`messages.create` interface (GPT through app/llm_openai.py), so the loop below is identical.
 
 Channel-agnostic: the browser simulator and the Twilio phone webhook both call
 `start_call` and `handle_turn`, and speak whatever text comes back.
@@ -14,6 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import anthropic
+import openai
 
 from app import knowledge
 from app.config import settings
@@ -27,21 +28,28 @@ MAX_TOKENS = 1024            # spoken replies are short; this only bounds runawa
 FALLBACK_LINE = ("Sorry, I'm having trouble on my end. I've noted your number and someone "
                  "from the team will call you back shortly.")
 
-_client: anthropic.Anthropic | anthropic.AnthropicFoundry | None = None
+LLM_ERRORS = (anthropic.APIError, openai.APIError)
+
+_client = None
 
 
-def make_client() -> anthropic.Anthropic | anthropic.AnthropicFoundry:
+def make_client():
+    if settings.llm_provider == "azure-openai":
+        from app.llm_openai import AzureOpenAIClient
+        return AzureOpenAIClient(settings.foundry_resource, settings.foundry_api_key, max_retries=2, timeout=30)
     if settings.llm_provider == "foundry":
         return anthropic.AnthropicFoundry(resource=settings.foundry_resource or None,
                                           api_key=settings.foundry_api_key or None, max_retries=2, timeout=30)
     if settings.llm_provider == "anthropic":
         return anthropic.Anthropic(api_key=settings.anthropic_api_key or None, max_retries=2, timeout=30)
-    raise ValueError(f"LLM_PROVIDER must be 'foundry' or 'anthropic', not {settings.llm_provider!r}")
+    raise ValueError(f"LLM_PROVIDER must be azure-openai, foundry or anthropic, not {settings.llm_provider!r}")
 
 
 def model_options() -> dict:
-    """Thinking/effort parameters for every request, from AGENT_THINKING / AGENT_EFFORT."""
+    """Thinking/effort parameters for every request, from AGENT_THINKING / AGENT_EFFORT (Claude only)."""
     opts: dict = {}
+    if settings.llm_provider == "azure-openai":
+        return opts
     if settings.agent_thinking == "off":
         opts["thinking"] = {"type": "disabled"}
     elif settings.agent_thinking == "adaptive":
@@ -53,7 +61,7 @@ def model_options() -> dict:
     return opts
 
 
-def client() -> anthropic.Anthropic | anthropic.AnthropicFoundry:
+def client():
     global _client
     if _client is None:
         _client = make_client()
@@ -212,8 +220,8 @@ def handle_turn(external_id: str, utterance: str) -> dict:
                 break
         else:
             spoken.append("Let me have someone from the team call you back to sort this out.")
-    except anthropic.APIError:
-        log.exception("Claude API error on call %s", external_id)
+    except LLM_ERRORS:
+        log.exception("Model API error on call %s", external_id)
         spoken = [FALLBACK_LINE]
         # History may now end on an unanswered user turn; close it so the next turn stays valid.
         if messages and messages[-1]["role"] == "user":

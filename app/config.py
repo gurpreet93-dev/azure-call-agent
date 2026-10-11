@@ -8,8 +8,10 @@ load_dotenv()  # reads .env from the working directory; real environment variabl
 
 @dataclass(frozen=True)
 class Settings:
-    # "foundry" = Claude deployed in Microsoft Foundry (Azure); "anthropic" = Anthropic API directly
-    llm_provider: str = os.getenv("LLM_PROVIDER", "foundry").strip().lower()
+    # azure-openai = GPT deployed in Microsoft Foundry (Azure OpenAI)
+    # foundry      = Claude deployed in Microsoft Foundry
+    # anthropic    = Anthropic API directly
+    llm_provider: str = os.getenv("LLM_PROVIDER", "azure-openai").strip().lower()
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     foundry_resource: str = os.getenv("FOUNDRY_RESOURCE", "")   # <name> in https://<name>.services.ai.azure.com
     foundry_api_key: str = os.getenv("FOUNDRY_API_KEY", "")
@@ -36,7 +38,7 @@ class Settings:
 
     @property
     def llm_configured(self) -> bool:
-        if self.llm_provider == "foundry":
+        if self.llm_provider in ("foundry", "azure-openai"):
             return bool(self.foundry_resource and self.foundry_api_key)
         return bool(self.anthropic_api_key)
 
