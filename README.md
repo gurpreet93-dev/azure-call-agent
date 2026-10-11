@@ -208,7 +208,10 @@ OAuth.
    **Authorize APIs** → sign in with the Gmail account whose calendar to use (accept the "unverified app"
    warning: it's your own app) → **Exchange authorization code for tokens** → copy the **Refresh token**.
 
-### 2. Settings (Vercel → Settings → Environment Variables, scoped to *Preview* / branch `appointments`)
+### 2. Settings (a separate Vercel project, e.g. `clearview-booking-agent`)
+
+Import the same repo as a second Vercel project, then **Settings → Environments → Production → Branch Tracking**
+→ `appointments`. Copy the shared variables from the Q&A project and add these (all environments):
 
 | Key | Value |
 |---|---|
@@ -219,6 +222,7 @@ OAuth.
 | `BUSINESS_HOURS`, `WORK_DAYS`, `VISIT_MINUTES`, `BUSINESS_TZ` | optional; defaults `10-18`, `Mon-Sat`, `60`, `Asia/Kolkata` |
 
 All other settings (Foundry endpoint, Speech, Azure service principal, `APP_PASSWORD`) are the same as `main`.
+When you rotate the client secret, update it in both projects and redeploy both: variables apply only to new deployments.
 
 ### 3. Create the agent in Foundry
 
