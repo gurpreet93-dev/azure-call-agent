@@ -99,6 +99,8 @@ def test_rejected_native_voice_falls_back_to_multilingual(monkeypatch):
 
     monkeypatch.setattr(speech, "settings", dataclasses.replace(speech.settings, speech_key="k"))
     monkeypatch.setattr(speech.httpx, "post", fake_post)
+    monkeypatch.setattr(speech, "available_voices", lambda: [])   # no Hindi voice found in Azure's list either
+    monkeypatch.setattr(speech, "_resolved", {})
     audio, voice = speech.synthesize_with_voice("नमस्ते", "hi-IN")
     assert tried == ["hi-IN-SwaraNeural", "multi"] and voice == speech.settings.speech_voice
 
@@ -150,3 +152,26 @@ def test_server_never_tries_a_browser_sign_in(monkeypatch):
         foundry_agent.credential()
         assert seen["exclude_interactive_browser_credential"] is on_server
     foundry_agent.credential.cache_clear()
+
+
+def test_rejected_voice_is_replaced_from_azures_voice_list(monkeypatch):
+    calls = []
+
+    def fake_post(url, content, timeout, headers):
+        body = content.decode()
+        calls.append(body)
+        ok = "or-IN-RealVoiceNeural" in body
+        return NS(status_code=200 if ok else 400, content=b"mp3", text="", reason_phrase="")
+
+    catalogue = [{"ShortName": "or-IN-MaleVoiceNeural", "Locale": "or-IN", "Gender": "Male"},
+                 {"ShortName": "or-IN-RealVoiceNeural", "Locale": "or-IN", "Gender": "Female"},
+                 {"ShortName": "hi-IN-SwaraNeural", "Locale": "hi-IN", "Gender": "Female"}]
+    monkeypatch.setattr(speech, "settings", dataclasses.replace(speech.settings, speech_key="k"))
+    monkeypatch.setattr(speech.httpx, "post", fake_post)
+    monkeypatch.setattr(speech, "available_voices", lambda: catalogue)
+    monkeypatch.setattr(speech, "_resolved", {})
+    audio, voice = speech.synthesize_with_voice("ନମସ୍କାର", "or-IN")
+    assert voice == "or-IN-RealVoiceNeural" and len(calls) == 2
+    speech.synthesize_with_voice("ନମସ୍କାର", "or-IN")          # remembered: straight to the working voice
+    assert len(calls) == 3 and "or-IN-RealVoiceNeural" in calls[-1]
+    assert speech.pick_voice("ta-IN", catalogue) is None

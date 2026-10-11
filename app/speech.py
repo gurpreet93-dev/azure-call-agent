@@ -17,7 +17,15 @@ OUTPUT_FORMAT = "audio-24khz-48kbitrate-mono-mp3"
 NATIVE_VOICES = {
     "en-IN": "en-IN-NeerjaNeural",
     "hi-IN": "hi-IN-SwaraNeural",
+    "bn-IN": "bn-IN-TanishaaNeural",
+    "gu-IN": "gu-IN-DhwaniNeural",
+    "mr-IN": "mr-IN-AarohiNeural",
     "pa-IN": "pa-IN-VaaniNeural",
+    "ta-IN": "ta-IN-PallaviNeural",
+    "te-IN": "te-IN-ShrutiNeural",
+    "kn-IN": "kn-IN-SapnaNeural",
+    "ml-IN": "ml-IN-SobhanaNeural",
+    "or-IN": "or-IN-SubhasiniNeural",
     "es-ES": "es-ES-ElviraNeural",
     "fr-FR": "fr-FR-DeniseNeural",
     "de-DE": "de-DE-KatjaNeural",
@@ -73,14 +81,43 @@ def _request(text: str, lang: str | None, voice: str) -> httpx.Response:
     })
 
 
+_voice_list: list[dict] | None = None
+_resolved: dict[str, str] = {}   # language -> a voice Azure accepted, found from Azure's own voice list
+
+
+def available_voices() -> list[dict]:
+    """Azure's voice list for this region (cached): [{"ShortName", "Locale", "Gender", ...}, ...]."""
+    global _voice_list
+    if _voice_list is None:
+        url = f"https://{settings.speech_region}.tts.speech.microsoft.com/cognitiveservices/voices/list"
+        resp = httpx.get(url, timeout=20, headers={"Ocp-Apim-Subscription-Key": settings.speech_key})
+        _voice_list = resp.json() if resp.status_code == 200 else []
+    return _voice_list
+
+
+def pick_voice(lang: str, catalogue: list[dict]) -> str | None:
+    """A neural voice for exactly this language, female first (matching the other voices)."""
+    matches = [v for v in catalogue if v.get("Locale") == lang and v.get("ShortName", "").endswith("Neural")]
+    matches.sort(key=lambda v: v.get("Gender") != "Female")
+    return matches[0]["ShortName"] if matches else None
+
+
 def synthesize_with_voice(text: str, lang: str | None = None) -> tuple[bytes, str]:
-    """Returns (mp3 audio, voice used)."""
+    """Returns (mp3 audio, voice used). If the configured voice for a language is rejected, a real voice
+    for that language is looked up in Azure's voice list; the multilingual voice is the last resort."""
     if not settings.speech_key:
         raise SpeechError("Set SPEECH_KEY (or FOUNDRY_API_KEY) in .env")
     text = speakable(text)
-    voice = voice_for(lang)
+    voice = _resolved.get(lang or "") or voice_for(lang)
     resp = _request(text, lang, voice)
-    if resp.status_code == 400 and voice != settings.speech_voice:  # voice not available: use the multilingual one
+    if resp.status_code == 400 and lang:
+        found = pick_voice(lang, available_voices())
+        if found and found != voice:
+            voice = found
+            resp = _request(text, lang, voice)
+            if resp.status_code == 200:
+                _resolved[lang] = voice
+    if resp.status_code == 400 and voice != settings.speech_voice:  # still rejected: use the multilingual voice
         voice = settings.speech_voice
         resp = _request(text, lang, voice)
     if resp.status_code != 200:
