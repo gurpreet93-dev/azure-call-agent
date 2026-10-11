@@ -61,7 +61,7 @@
         <option value="zh-CN">中文 (Mandarin)</option>
       </select>
       <label><input type="checkbox" id="handsfree" checked> Keep listening after each reply</label>
-      <label><input type="checkbox" id="bargein" checked> Interrupt by speaking</label>
+      <label title="Best with headphones: on speakers it can hear its own voice"><input type="checkbox" id="bargein"> Interrupt by speaking (headphones)</label>
       <button id="reset">New conversation</button>
     </div>
 
@@ -163,6 +163,7 @@ async function startBargeIn() {
   try {
     if (!micStream) micStream = await navigator.mediaDevices.getUserMedia(
       {audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true}});
+    if (!speaking) return stopBargeIn();      // the reply ended while we waited for the mic: release it
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === 'suspended') await audioCtx.resume();
     const analyser = audioCtx.createAnalyser(); analyser.fftSize = 1024;
@@ -180,7 +181,11 @@ async function startBargeIn() {
     }, 50);
   } catch { /* no mic permission for barge-in: tapping the mic still interrupts */ }
 }
-function stopBargeIn() { clearInterval(bargeTimer); bargeTimer = null; }
+function stopBargeIn() {
+  clearInterval(bargeTimer); bargeTimer = null;
+  // Release the microphone: while this stream is open, Chrome's speech recognition can get no audio.
+  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+}
 
 function interruptAndListen() {
   if (!speaking || !finishSpeaking) return;
