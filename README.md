@@ -7,14 +7,14 @@ The agent's instructions, knowledge base and model are configured **in Foundry o
 holds no prompt and no documents; it references the agent by name.
 
 ```
-mic ─► browser speech recognition (language you pick) ─► text
+mic ─► Azure Speech recognition (language auto-detected) ─► text
      ─► this app ─► Foundry agent: instructions + knowledge files + model (all in Foundry)
      ─► reply text ─► Azure Speech, multilingual neural voice ─► audio in the browser
 ```
 
 | Part | Where it lives |
 |---|---|
-| Speech → text | Browser (Chrome / Edge Web Speech API) |
+| Speech → text | Azure AI Speech, streaming from the browser (Speech SDK 1.51.0, bundled in `app/static/vendor`); Chrome's recognition as fallback |
 | Instructions, knowledge, model, conversation history | Microsoft Foundry (Foundry Agent Service) |
 | Text → speech | Azure Speech, same Foundry resource |
 | The screen | `app/static/index.html` + `app/main.py` (FastAPI) |
@@ -152,15 +152,16 @@ The site signs in to Foundry as a **service principal** (an Entra app identity w
 
 ## Notes
 
-- **Languages.** Browser speech recognition needs to be told the language, hence the picker. The agent
-  replies in whatever language it hears; the voice is pinned to the picked language.
+- **Languages.** Azure Speech recognition detects the language as you talk, choosing between the picked
+  language, Indian English and Hindi; the picker follows what it hears and what the agent replies in.
 - **If Azure Speech fails**, the browser speaks the reply with its own voice and the reply bubble says so.
 - **Voices.** Each language has a native Azure voice (Hindi: `hi-IN-SwaraNeural`, Indian English: `en-IN-NeerjaNeural`,
   …; table in `app/speech.py`, override with `SPEECH_VOICES`). Markdown and citation marks are stripped before speaking.
-- **Interrupting.** Tap the mic while the agent talks, or just start talking ("Interrupt by speaking").
-  Speech recognition keeps running during the reply; words that match the reply being spoken are the agent's
-  own voice coming back through the speakers and are ignored, so only the caller's own words stop it, and their
-  whole sentence is sent.
+- **Interrupting.** One recognition session runs for the whole conversation, on a microphone stream with echo
+  cancellation. Talking over a reply stops it and your sentence is sent; heard words that match the reply being
+  spoken are treated as the agent's own echo and ignored. Tapping the mic during a reply also stops it.
+- **Speech token.** The browser gets a 10-minute Azure Speech token from `/api/speech-token` (refreshed
+  automatically); the Speech key never leaves the server.
 
 ## Tests
 

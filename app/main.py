@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app import foundry_agent, speech
@@ -46,9 +47,22 @@ class SpeakIn(BaseModel):
     lang: str | None = Field(default=None, max_length=20)
 
 
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
 @app.get("/")
 def index():
     return FileResponse(STATIC / "index.html")
+
+
+@app.get("/api/speech-token")
+def speech_token():
+    """Short-lived token for Azure Speech recognition in the browser (the key never leaves the server)."""
+    try:
+        return {"token": speech.issue_token(), "region": settings.speech_region}
+    except Exception as exc:
+        log.warning("Azure Speech token failed: %s", exc)
+        raise HTTPException(502, str(exc)) from exc
 
 
 @app.post("/api/conversation")

@@ -165,5 +165,16 @@ def synthesize_with_voice(text: str, lang: str | None = None) -> tuple[bytes, st
     return resp.content, voice
 
 
+def issue_token() -> str:
+    """A 10-minute Azure Speech token for the browser's speech recognition, so the key stays on the server."""
+    if not settings.speech_key:
+        raise SpeechError("Set SPEECH_KEY (or FOUNDRY_API_KEY) in .env")
+    url = f"https://{settings.speech_region}.api.cognitive.microsoft.com/sts/v1.0/issueToken"
+    resp = httpx.post(url, timeout=10, headers={"Ocp-Apim-Subscription-Key": settings.speech_key})
+    if resp.status_code != 200:
+        raise SpeechError(f"Azure Speech token request returned {resp.status_code}: {resp.text[:200]}")
+    return resp.text
+
+
 def synthesize(text: str, lang: str | None = None) -> bytes:
     return synthesize_with_voice(text, lang)[0]

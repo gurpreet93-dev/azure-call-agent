@@ -191,3 +191,19 @@ def test_speak_reports_the_language_it_spoke(client, monkeypatch):
     monkeypatch.setattr(speech, "synthesize_with_voice", lambda text, lang=None: (b"mp3", "hi-IN-SwaraNeural"))
     r = client.post("/api/speak", json={"text": "यह ग्लास गर्मी रोकता है", "lang": "en-IN"})
     assert r.headers["x-lang"] == "hi-IN"
+
+
+def test_speech_token_for_browser_recognition(client, monkeypatch):
+    monkeypatch.setattr(speech, "issue_token", lambda: "tok123")
+    assert client.get("/api/speech-token").json() == {"token": "tok123", "region": speech.settings.speech_region}
+
+    def fail():
+        raise speech.SpeechError("Azure Speech token request returned 401")
+    monkeypatch.setattr(speech, "issue_token", fail)
+    assert client.get("/api/speech-token").status_code == 502
+
+
+def test_speech_sdk_is_served_with_the_page(client):
+    assert "/static/vendor/speech-sdk-1.51.0.min.js" in client.get("/").text
+    r = client.get("/static/vendor/speech-sdk-1.51.0.min.js")
+    assert r.status_code == 200 and "SpeechSDK" in r.text
