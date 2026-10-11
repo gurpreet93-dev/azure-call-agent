@@ -1,0 +1,12 @@
+{
+  // GitHub Codespaces / VS Code dev container: runs the app in the cloud, nothing installed locally.
+  "name": "azure-call-agent",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "postCreateCommand": "pip install -r requirements.txt && [ -f .env ] || cp .env.example .env",
+  "forwardPorts": [8000],
+  "portsAttributes": { "8000": { "label": "Call agent app", "onAutoForward": "openBrowser" } },
+  "customizations": { "vscode": { "extensions": ["ms-python.python"] } },
+  "secrets": {
+    "FOUNDRY_API_KEY": { "description": "API key from your Microsoft Foundry project's Home page" }
+  }
+}

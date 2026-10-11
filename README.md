@@ -47,6 +47,15 @@ Browser "test call" (mic + speaker) ─► /api/sim/* ─┤
 | Call log: transcript, every decision with inputs/results, emails and invites | `/calls` |
 | Scenario eval: simulated callers × 10 scenarios, scored on actions + price grounding | `scripts/run_scenarios.py`, `evals/` |
 
+## Run it in the browser (GitHub Codespaces, nothing to install)
+
+1. GitHub → **Settings → Codespaces → Secrets → New secret**: name `FOUNDRY_API_KEY`, value = your
+   Foundry key, repository access = this repo. (Real environment variables override `.env`.)
+2. On this repo: **Code → Codespaces → Create codespace on main**. Dependencies install automatically.
+3. In the codespace terminal: edit `.env` (`FOUNDRY_RESOURCE`, `AGENT_MODEL`), then
+   `python -m scripts.check_foundry`, `python -m app.seed`, `uvicorn app.main:app`.
+4. Open the forwarded port 8000 when prompted (or the **Ports** tab).
+
 ## Run it locally (10 minutes)
 
 ```bash
