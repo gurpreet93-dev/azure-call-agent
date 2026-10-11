@@ -73,7 +73,8 @@ def chat(body: ChatIn):
 def speak(body: SpeakIn):
     try:
         audio, voice = speech.synthesize_with_voice(body.text, body.lang)
-        return Response(audio, media_type="audio/mpeg", headers={"X-Voice": voice})
+        spoken_lang = speech.language_of(speech.speakable(body.text), body.lang) or ""
+        return Response(audio, media_type="audio/mpeg", headers={"X-Voice": voice, "X-Lang": spoken_lang})
     except Exception as exc:
         log.warning("Azure Speech failed, browser will fall back to its own voice: %s", exc)
         raise HTTPException(502, str(exc)) from exc

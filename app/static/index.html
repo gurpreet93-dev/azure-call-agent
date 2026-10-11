@@ -124,6 +124,7 @@ function speak(text) {
     try {
       const r = await api('/api/speak', {text, lang});
       currentVia = 'Azure Speech · ' + (r.headers.get('X-Voice') || '');
+      followLanguage(r.headers.get('X-Lang'));
       const url = URL.createObjectURL(await r.blob());
       if (done) return URL.revokeObjectURL(url);
       const fin = finishSpeaking;
@@ -144,6 +145,14 @@ function speak(text) {
       startBargeIn();
     }
   });
+}
+
+// The agent answers in the caller's language; make the mic listen for that language on the next turn.
+function followLanguage(lang) {
+  const sel = $('lang');
+  if (!lang || lang === sel.value || ![...sel.options].some(o => o.value === lang)) return;
+  sel.value = lang;
+  log('sys', 'Switched to ' + sel.selectedOptions[0].text + ' (the language the agent is replying in).');
 }
 
 // Barge-in: while a reply plays, watch the microphone level (with echo cancellation, so the agent's own

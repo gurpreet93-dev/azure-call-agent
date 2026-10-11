@@ -175,3 +175,19 @@ def test_rejected_voice_is_replaced_from_azures_voice_list(monkeypatch):
     speech.synthesize_with_voice("ନମସ୍କାର", "or-IN")          # remembered: straight to the working voice
     assert len(calls) == 3 and "or-IN-RealVoiceNeural" in calls[-1]
     assert speech.pick_voice("ta-IN", catalogue) is None
+
+
+def test_voice_follows_the_script_of_the_reply():
+    hindi = "SGG Planitherm एक Low-E thermal insulation glass है, जो गर्मी को अंदर आने से रोकता है।"
+    assert speech.language_of(hindi, "en-IN") == "hi-IN"           # English picked, Hindi reply -> Hindi voice
+    assert speech.language_of(hindi, "mr-IN") == "mr-IN"           # Devanagari stays Marathi when Marathi is picked
+    assert speech.language_of("Planitherm பற்றி சொல்லுங்கள்", "en-IN") == "ta-IN"
+    assert speech.language_of("Planitherm is a Low-E glass.", "en-IN") == "en-IN"
+    assert speech.language_of("Bonjour, le verre Planitherm", "fr-FR") == "fr-FR"
+    assert speech.language_of("Use SGG Planitherm (प्लानिथर्म) for double glazing units today", "en-IN") == "en-IN"
+
+
+def test_speak_reports_the_language_it_spoke(client, monkeypatch):
+    monkeypatch.setattr(speech, "synthesize_with_voice", lambda text, lang=None: (b"mp3", "hi-IN-SwaraNeural"))
+    r = client.post("/api/speak", json={"text": "यह ग्लास गर्मी रोकता है", "lang": "en-IN"})
+    assert r.headers["x-lang"] == "hi-IN"

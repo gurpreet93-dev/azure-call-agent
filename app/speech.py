@@ -38,6 +38,45 @@ class SpeechError(RuntimeError):
     pass
 
 
+# Unicode blocks of the scripts the agent may reply in, and the language whose voice should read them.
+SCRIPTS = [
+    ((0x0900, 0x097F), "hi-IN"),   # Devanagari (Hindi; Marathi if Marathi is picked)
+    ((0x0980, 0x09FF), "bn-IN"),   # Bengali
+    ((0x0A00, 0x0A7F), "pa-IN"),   # Gurmukhi (Punjabi)
+    ((0x0A80, 0x0AFF), "gu-IN"),   # Gujarati
+    ((0x0B00, 0x0B7F), "or-IN"),   # Odia
+    ((0x0B80, 0x0BFF), "ta-IN"),   # Tamil
+    ((0x0C00, 0x0C7F), "te-IN"),   # Telugu
+    ((0x0C80, 0x0CFF), "kn-IN"),   # Kannada
+    ((0x0D00, 0x0D7F), "ml-IN"),   # Malayalam
+    ((0x0600, 0x06FF), "ar-SA"),   # Arabic
+    ((0x4E00, 0x9FFF), "zh-CN"),   # CJK
+]
+
+
+def language_of(text: str, picked: str | None) -> str | None:
+    """The language a reply is actually written in, judged by its script. A Latin-script reply (English,
+    Spanish, ...) keeps the picked language. Devanagari is Hindi unless Marathi was picked."""
+    counts: dict[str, int] = {}
+    letters = 0
+    for ch in text:
+        if ch.isalpha():
+            letters += 1
+            cp = ord(ch)
+            for (lo, hi), lang in SCRIPTS:
+                if lo <= cp <= hi:
+                    counts[lang] = counts.get(lang, 0) + 1
+                    break
+    if not counts or not letters:
+        return picked
+    lang, n = max(counts.items(), key=lambda kv: kv[1])
+    if n < 0.2 * letters:          # a stray word in another script: keep the picked language
+        return picked
+    if lang == "hi-IN" and picked == "mr-IN":
+        return "mr-IN"
+    return lang
+
+
 def speakable(text: str) -> str:
     """Strip chat formatting (markdown bold, headings, list markers, links) so the voice doesn't read it out."""
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)          # [label](url) -> label
@@ -108,6 +147,7 @@ def synthesize_with_voice(text: str, lang: str | None = None) -> tuple[bytes, st
     if not settings.speech_key:
         raise SpeechError("Set SPEECH_KEY (or FOUNDRY_API_KEY) in .env")
     text = speakable(text)
+    lang = language_of(text, lang)     # Hindi text gets a Hindi voice even if English was picked
     voice = _resolved.get(lang or "") or voice_for(lang)
     resp = _request(text, lang, voice)
     if resp.status_code == 400 and lang:
