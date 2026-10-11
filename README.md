@@ -95,7 +95,22 @@ what to fix when one fails.
 Add a Codespaces secret `FOUNDRY_API_KEY` (the Foundry key), create a codespace on `main`, then run
 `az login --use-device-code` before the two commands above.
 
-## 4. Put it on a website (Azure App Service)
+## 4. Put it on a website (Vercel)
+
+The site signs in to Foundry as a **service principal** (an Entra app identity with a client secret).
+1. Azure portal → **Microsoft Entra ID → App registrations → New registration** → name `clearview-vercel` →
+   Register. Copy **Application (client) ID** and **Directory (tenant) ID**. Then **Certificates & secrets →
+   New client secret** → copy the **Value** (shown once).
+2. Foundry resource → **Access control (IAM) → Add role assignment → Azure AI User** → Members: *User, group,
+   or service principal* → `clearview-vercel`.
+3. vercel.com → **Add New → Project** → import this GitHub repo. Environment variables:
+   `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_AGENT_NAME`, `SPEECH_KEY`, `SPEECH_REGION`, `SPEECH_VOICE`,
+   `APP_PASSWORD`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`. Deploy.
+4. Open the `*.vercel.app` URL; sign in with any username and `APP_PASSWORD`.
+
+`index.py` is the Vercel entrypoint; `.vercelignore` keeps tests and local files out of the bundle.
+
+## 4b. Or on Azure App Service
 
 1. Azure portal → **Create a resource → Web App**. Resource group: the Foundry one. Name: e.g.
    `clearview-voice-agent`. Publish: **Code**. Runtime: **Python 3.12**. OS: **Linux**. Region: **East US 2**.
@@ -120,6 +135,7 @@ Add a Codespaces secret `FOUNDRY_API_KEY` (the Foundry key), create a codespace 
 | `SPEECH_KEY` | Foundry resource key; blank = use `FOUNDRY_API_KEY` |
 | `SPEECH_REGION` | The resource's region (`eastus2`) |
 | `SPEECH_VOICE` | Azure neural voice; the default multilingual voice speaks every listed language |
+| `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` | Vercel only: the service principal the site signs in as |
 | `APP_PASSWORD` | Optional. When set, the site asks for it (any username). Set it on any public deployment |
 
 ## Notes
@@ -134,6 +150,7 @@ Add a Codespaces secret `FOUNDRY_API_KEY` (the Foundry key), create a codespace 
 ## Tests
 
 ```
+pip install -r requirements-dev.txt
 pytest -q
 ```
 Foundry and Azure Speech are replaced with fakes, so the tests run without an Azure account.

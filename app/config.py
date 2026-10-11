@@ -23,8 +23,10 @@ class Settings:
     # Set on a public website so only people you give it to can use (and spend on) the agent.
     # The browser shows its own sign-in box; any username, this password.
     app_password: str = os.getenv("APP_PASSWORD", "")
-    # Azure App Service sets WEBSITE_SITE_NAME; there the app signs in with its managed identity.
-    on_app_service: bool = bool(os.getenv("WEBSITE_SITE_NAME"))
+    # On a server there is no browser for an interactive sign-in. Azure App Service sets WEBSITE_SITE_NAME
+    # (sign-in: managed identity); Vercel sets VERCEL (sign-in: service principal via AZURE_TENANT_ID,
+    # AZURE_CLIENT_ID, AZURE_CLIENT_SECRET).
+    on_server: bool = bool(os.getenv("WEBSITE_SITE_NAME") or os.getenv("VERCEL"))
 
 
 settings = Settings()

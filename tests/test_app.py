@@ -103,3 +103,19 @@ def test_password_protects_everything_but_health(monkeypatch):
 
 def test_no_password_means_open(client):
     assert client.get("/").status_code == 200
+
+
+def test_server_never_tries_a_browser_sign_in(monkeypatch):
+    seen = {}
+
+    class FakeCred:
+        def __init__(self, **kw):
+            seen.update(kw)
+
+    monkeypatch.setattr(foundry_agent, "DefaultAzureCredential", FakeCred)
+    for on_server in (True, False):
+        foundry_agent.credential.cache_clear()
+        monkeypatch.setattr(foundry_agent, "settings", dataclasses.replace(foundry_agent.settings, on_server=on_server))
+        foundry_agent.credential()
+        assert seen["exclude_interactive_browser_credential"] is on_server
+    foundry_agent.credential.cache_clear()

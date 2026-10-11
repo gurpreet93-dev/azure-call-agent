@@ -1,0 +1,6 @@
+.env
+.venv
+.devcontainer
+tests
+requirements-dev.txt
+__pycache__
