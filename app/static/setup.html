@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Booking Agent Setup</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1c2430; --muted:#5f6b7a; --line:#e3e7ec; --accent:#5b3fd6; --ok:#147a3d; --err:#b42318; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12151a; --card:#1b2028; --text:#e7ebf0; --muted:#9aa5b1; --line:#2c333d; --accent:#9d8bff; --ok:#6fd39a; --err:#ff8a80; } }
+  body { margin:0; font:16px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width:680px; margin:0 auto; padding:24px 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px; }
+  button { font:inherit; padding:8px 14px; border-radius:8px; border:none; background:var(--accent); color:#fff; cursor:pointer; }
+  pre { white-space:pre-wrap; word-break:break-word; font-size:13px; color:var(--muted); }
+  a { color:var(--accent); }
+</style></head>
+<body><main>
+  <h1>Booking agent setup</h1>
+  <div class="card">
+    <h3>1. Calendar</h3>
+    <p>Checks whether Google Calendar is connected and can be read.</p>
+    <button id="cal">Check calendar</button><pre id="calout"></pre>
+  </div>
+  <div class="card">
+    <h3>2. Foundry agent</h3>
+    <p>Creates the booking agent in Foundry with its tools (first run), or refreshes only its tools (later runs;
+      your instructions in Foundry are kept).</p>
+    <button id="setup">Create / update agent</button><pre id="setupout"></pre>
+  </div>
+  <p><a href="/">← Back to the voice agent</a></p>
+</main>
+<script>
+async function call(url, method, out) {
+  out.textContent = 'Working…';
+  try { const r = await fetch(url, {method}); out.textContent = JSON.stringify(await r.json(), null, 2); }
+  catch (e) { out.textContent = e.message; }
+}
+document.getElementById('cal').onclick = () => call('/api/calendar-status', 'GET', document.getElementById('calout'));
+document.getElementById('setup').onclick = () => call('/api/setup-agent', 'POST', document.getElementById('setupout'));
+</script></body></html>

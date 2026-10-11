@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Foundry Voice Agent</title>
+<title>ClearView Booking Agent</title>
 <style>
   :root { --bg:#f6f7f9; --card:#fff; --text:#1c2430; --muted:#5f6b7a; --line:#e3e7ec; --accent:#5b3fd6; --agent:#eef0ff; --you:#e9f7ef; --err:#b42318; }
   @media (prefers-color-scheme: dark) { :root { --bg:#12151a; --card:#1b2028; --text:#e7ebf0; --muted:#9aa5b1; --line:#2c333d; --accent:#9d8bff; --agent:#252a3d; --you:#1f3127; --err:#ff8a80; } }
@@ -29,14 +29,16 @@
   .agent { background: var(--agent); align-self: flex-start; }
   .sys { color: var(--muted); font-size: 13px; align-self: center; text-align:center; }
   .sys.err { color: var(--err); }
+  .booked { align-self: center; background: #e7f6ec; color: #14532d; border: 1px solid #b7e2c5; font-weight: 600; }
+  @media (prefers-color-scheme: dark) { .booked { background: #163222; color: #bfe9cd; border-color: #2b5a3d; } }
   .meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
   #status { font-size: 14px; color: var(--muted); }
 </style>
 </head>
 <body>
 <main>
-  <h1>Foundry Voice Agent</h1>
-  <p class="sub">Tap the microphone once and talk, in any of the languages below. The agent (Microsoft Foundry) listens and replies with Azure Speech; you can talk over it to interrupt.</p>
+  <h1>ClearView Booking Agent</h1>
+  <p class="sub">Tap the microphone once and talk, in any of the languages below. The agent (Microsoft Foundry) takes your details and books a site visit in Google Calendar. <a href="/setup">Setup</a></p>
 
   <div class="card">
     <div class="row">
@@ -163,7 +165,9 @@ async function send(text) {
   try {
     status('Thinking…');
     const r = await api('/api/chat', {conversation_id: await ensureConversation(), text});
-    const reply = (await r.json()).reply || '(no reply)';
+    const body = await r.json();
+    const reply = body.reply || '(no reply)';
+    showActions(body.actions || []);
     const bubble = log('agent', reply.replace(/【[^】]*】/g, ''));
     status(session ? 'Speaking… (just talk, or tap the mic, to interrupt)' : 'Speaking… (tap the mic to interrupt)');
     const res = await speak(reply);
@@ -179,6 +183,21 @@ async function send(text) {
     else if (!session && fallbackOn) chromeListen();
   }
 }
+// What the agent did behind the scenes (its function tools), shown as small notes and a booking card.
+const TOOL_LABELS = {get_current_date: 'checked today\'s date', check_availability: 'checked the calendar',
+                     book_appointment: 'booked the visit'};
+function showActions(actions) {
+  for (const a of actions) {
+    if (a.tool === 'book_appointment' && a.ok && a.result.booked) {
+      const r = a.result;
+      log('booked', '📅 Site visit booked: ' + r.when,
+          r.calendar + (r.invite_sent_to && r.invite_sent_to.length ? ' · invite emailed to ' + r.invite_sent_to.join(', ') : ''));
+    } else {
+      log('sys', '⚙ Agent ' + (TOOL_LABELS[a.tool] || a.tool) + (a.ok ? '' : ': ' + (a.result.error || 'failed')));
+    }
+  }
+}
+
 function interrupt() { if (speaking && finishSpeaking) finishSpeaking(true); }
 
 // Sentences said within a second of each other ("बताओ बताओ। अरे, गर्मी…") become one turn, not two agent calls.

@@ -25,6 +25,19 @@ class Settings:
     # Optional per-language voice overrides, e.g. "hi-IN=hi-IN-MadhurNeural,pa-IN=pa-IN-OjasNeural"
     speech_voices: str = os.getenv("SPEECH_VOICES", "")
 
+    # --- Booking agent (appointments branch) ---
+    business_name: str = os.getenv("BUSINESS_NAME", "ClearView Glass Solutions")
+    business_tz: str = os.getenv("BUSINESS_TZ", "Asia/Kolkata")
+    business_hours: str = os.getenv("BUSINESS_HOURS", "10-18")          # 24-hour clock, visits start/end within
+    work_days: str = os.getenv("WORK_DAYS", "Mon-Sat")
+    visit_minutes: int = int(os.getenv("VISIT_MINUTES", "60"))
+    contractor_email: str = os.getenv("CONTRACTOR_EMAIL", "").strip()   # gets every invite
+    # Google Calendar via your own account (OAuth refresh token). Blank = in-memory practice calendar.
+    google_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+    google_client_secret: str = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+    google_refresh_token: str = os.getenv("GOOGLE_REFRESH_TOKEN", "").strip()
+    google_calendar_id: str = os.getenv("GOOGLE_CALENDAR_ID", "primary").strip()
+
     # Set on a public website so only people you give it to can use (and spend on) the agent.
     # The browser shows its own sign-in box; any username, this password.
     app_password: str = os.getenv("APP_PASSWORD", "")

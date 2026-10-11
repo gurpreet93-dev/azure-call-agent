@@ -5,6 +5,7 @@ configured in Foundry. This module only creates a conversation and sends the use
 agent by name. Sign-in is Microsoft Entra ID: an existing `az login` if there is one, otherwise a
 browser window opens once to sign in (so nothing else needs installing on a local machine).
 """
+import json
 from functools import lru_cache
 
 import openai
@@ -45,21 +46,44 @@ def new_conversation() -> str:
 
 # Azure counts each request against the tokens-per-minute limit as its input PLUS the most it may write, so an
 # uncapped request "costs" thousands of tokens even for a one-sentence reply. Spoken replies are short.
-LIMITS = {"max_output_tokens": settings.agent_max_output_tokens, "max_tool_calls": 2, "truncation": "auto"}
+LIMITS = {"max_output_tokens": settings.agent_max_output_tokens, "max_tool_calls": 4, "truncation": "auto"}
 _limits_supported = True
+MAX_TOOL_ROUNDS = 5
 
 
-def ask(conversation_id: str, text: str) -> str:
+def _create(conversation_id: str, input_):
     global _limits_supported
     client = _openai_client()
     if _limits_supported:
         try:
-            response = client.responses.create(conversation=conversation_id, input=text, extra_body=_agent_ref(),
-                                               **LIMITS)
-            return (response.output_text or "").strip()
+            return client.responses.create(conversation=conversation_id, input=input_, extra_body=_agent_ref(),
+                                           **LIMITS)
         except openai.BadRequestError as exc:      # the agent service refused one of the limits: go without them
             if not any(k in str(exc) for k in LIMITS):
                 raise
             _limits_supported = False
-    response = client.responses.create(conversation=conversation_id, input=text, extra_body=_agent_ref())
-    return (response.output_text or "").strip()
+    return client.responses.create(conversation=conversation_id, input=input_, extra_body=_agent_ref())
+
+
+def ask_with_actions(conversation_id: str, text: str) -> tuple[str, list[dict]]:
+    """One caller turn. When the agent calls a function tool (defined on the agent in Foundry), run it here,
+    hand the result back, and let the agent continue, until it answers in words."""
+    from app import booking
+
+    actions: list[dict] = []
+    response = _create(conversation_id, text)
+    for _ in range(MAX_TOOL_ROUNDS):
+        calls = [item for item in (getattr(response, "output", None) or []) if getattr(item, "type", "") == "function_call"]
+        if not calls:
+            break
+        outputs = []
+        for call in calls:
+            result, ok = booking.run_tool(call.name, call.arguments)
+            actions.append({"tool": call.name, "ok": ok, "result": result})
+            outputs.append({"type": "function_call_output", "call_id": call.call_id, "output": json.dumps(result)})
+        response = _create(conversation_id, outputs)
+    return (response.output_text or "").strip(), actions
+
+
+def ask(conversation_id: str, text: str) -> str:
+    return ask_with_actions(conversation_id, text)[0]

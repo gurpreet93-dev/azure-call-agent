@@ -21,7 +21,8 @@ def test_page_has_mic_language_picker_and_text_box(client):
 def test_conversation_chat_and_speak_go_to_foundry_and_speech(client, monkeypatch):
     calls = []
     monkeypatch.setattr(foundry_agent, "new_conversation", lambda: "conv_123")
-    monkeypatch.setattr(foundry_agent, "ask", lambda cid, text: calls.append((cid, text)) or "Namaste! Kaise madad karun?")
+    monkeypatch.setattr(foundry_agent, "ask_with_actions",
+                        lambda cid, text: (calls.append((cid, text)) or "Namaste! Kaise madad karun?", []))
     monkeypatch.setattr(speech, "synthesize_with_voice", lambda text, lang=None: (b"ID3fake-mp3", "hi-IN-SwaraNeural"))
 
     cid = client.post("/api/conversation").json()["conversation_id"]
@@ -37,7 +38,7 @@ def test_conversation_chat_and_speak_go_to_foundry_and_speech(client, monkeypatc
 def test_failures_return_readable_errors(client, monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("PermissionDenied")
-    monkeypatch.setattr(foundry_agent, "ask", boom)
+    monkeypatch.setattr(foundry_agent, "ask_with_actions", boom)
     monkeypatch.setattr(speech, "synthesize_with_voice", boom)
     r = client.post("/api/chat", json={"conversation_id": "c", "text": "hi"})
     assert r.status_code == 502 and "PermissionDenied" in r.json()["detail"]
@@ -60,7 +61,7 @@ def test_agent_is_called_by_name_with_server_side_conversation(monkeypatch):
     assert foundry_agent.ask("conv_9", "hi") == "Hello there."
     assert sent == {"conversation": "conv_9", "input": "hi",
                     "extra_body": {"agent_reference": {"name": "clearview-glass-agent", "type": "agent_reference"}},
-                    "max_output_tokens": 400, "max_tool_calls": 2, "truncation": "auto"}
+                    "max_output_tokens": 400, "max_tool_calls": 4, "truncation": "auto"}
 
 
 def test_missing_settings_are_reported(monkeypatch):
@@ -217,7 +218,7 @@ def test_rate_limit_gives_a_plain_message(client, monkeypatch):
     def limited(cid, text):
         raise openai.RateLimitError("Error code: 429 - rate_limit_exceeded", response=httpx.Response(
             429, request=httpx.Request("POST", "https://x")), body=None)
-    monkeypatch.setattr(foundry_agent, "ask", limited)
+    monkeypatch.setattr(foundry_agent, "ask_with_actions", limited)
     r = client.post("/api/chat", json={"conversation_id": "c", "text": "hi"})
     assert r.status_code == 429 and "tokens-per-minute" in r.json()["detail"]
 

@@ -1,5 +1,10 @@
 # Foundry Voice Agent
 
+> **Branch `appointments`: the booking agent.** A caller talks to the agent; it collects their details, checks
+> Google Calendar, books a site visit and Google emails the invite to the caller and the contractor. The product
+> Q&A agent lives on `main`. Setup for this branch: [Booking agent setup](#booking-agent-setup-appointments-branch).
+
+
 Phone-style voice assistant for a glass supplier, in the caller's own language. The browser turns your speech into text, an agent in
 **Microsoft Foundry** decides what to say, and **Azure Speech** speaks the reply.
 
@@ -170,3 +175,54 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 Foundry and Azure Speech are replaced with fakes, so the tests run without an Azure account.
+
+
+## Booking agent setup (appointments branch)
+
+```
+caller ─► voice screen ─► Foundry agent "clearview-booking-agent" (instructions + 3 function tools, in Foundry)
+                              │  get_current_date · check_availability · book_appointment
+                              ▼
+                     this app runs the tools ─► Google Calendar (free/busy, create event, sendUpdates=all)
+                                                   └─► Google emails the invite to the caller + CONTRACTOR_EMAIL
+```
+
+The agent decides when to call a tool; the app only carries it out (`app/booking.py`) and hands the result back
+(`app/foundry_agent.py`). Every tool checks its input (10-digit phone, 6-digit pincode, valid email, slot still
+free) and returns errors to the agent, which fixes the detail with the caller. Without Google configured, bookings go
+to an in-memory practice calendar so the conversation can be tried first.
+
+### 1. Google Calendar access (once, ~15 minutes, free)
+
+A personal Gmail calendar can't send invites from a service account, so the app uses your own account through
+OAuth.
+1. console.cloud.google.com → create a project → **APIs & Services → Library → Google Calendar API → Enable**.
+2. **OAuth consent screen**: External; app name `ClearView booking`; your email as support/developer contact; add
+   scopes `.../auth/calendar.events` and `.../auth/calendar.freebusy`; add yourself as a test user. Then
+   **Publish app** (In production). Unpublished "testing" apps get refresh tokens that expire after 7 days.
+3. **Credentials → Create credentials → OAuth client ID** → Web application → Authorised redirect URI
+   `https://developers.google.com/oauthplayground` → copy the **Client ID** and **Client secret**.
+4. developers.google.com/oauthplayground → ⚙ (top right) → **Use your own OAuth credentials** → paste both.
+   In "Input your own scopes" enter
+   `https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.freebusy` →
+   **Authorize APIs** → sign in with the Gmail account whose calendar to use (accept the "unverified app"
+   warning: it's your own app) → **Exchange authorization code for tokens** → copy the **Refresh token**.
+
+### 2. Settings (Vercel → Settings → Environment Variables, scoped to *Preview* / branch `appointments`)
+
+| Key | Value |
+|---|---|
+| `FOUNDRY_AGENT_NAME` | `clearview-booking-agent` (a separate agent from the Q&A one) |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` | from step 1 (Secret) |
+| `GOOGLE_CALENDAR_ID` | `primary` (your main calendar) |
+| `CONTRACTOR_EMAIL` | the address that should get every booking invite |
+| `BUSINESS_HOURS`, `WORK_DAYS`, `VISIT_MINUTES`, `BUSINESS_TZ` | optional; defaults `10-18`, `Mon-Sat`, `60`, `Asia/Kolkata` |
+
+All other settings (Foundry endpoint, Speech, Azure service principal, `APP_PASSWORD`) are the same as `main`.
+
+### 3. Create the agent in Foundry
+
+Open the branch's site → **/setup** → **Check calendar** (should say Google Calendar, `google_ok: true`) →
+**Create / update agent**. This creates `clearview-booking-agent` in Foundry with starter instructions and the
+three function tools. From then on edit its instructions in the Foundry portal; running setup again refreshes
+only the tools and keeps your instructions. (Locally: `python -m scripts.setup_booking_agent`.)

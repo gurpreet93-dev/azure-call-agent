@@ -78,7 +78,8 @@ def start_conversation():
 @app.post("/api/chat")
 def chat(body: ChatIn):
     try:
-        return {"reply": foundry_agent.ask(body.conversation_id, body.text)}
+        reply, actions = foundry_agent.ask_with_actions(body.conversation_id, body.text)
+        return {"reply": reply, "actions": actions}
     except openai.RateLimitError as exc:
         log.warning("gpt-4o rate limit: %s", exc)
         raise HTTPException(429, "The model is over its tokens-per-minute limit. Wait about a minute and try again, "
@@ -97,6 +98,39 @@ def speak(body: SpeakIn):
     except Exception as exc:
         log.warning("Azure Speech failed, browser will fall back to its own voice: %s", exc)
         raise HTTPException(502, str(exc)) from exc
+
+
+@app.post("/api/setup-agent")
+def setup_agent():
+    """Create/update the booking agent in Foundry from the website (needs APP_PASSWORD set on a server)."""
+    if settings.on_server and not settings.app_password:
+        raise HTTPException(403, "Set APP_PASSWORD before using setup on a public site.")
+    from app.agent_setup import setup_booking_agent
+    try:
+        return setup_booking_agent()
+    except Exception as exc:
+        log.exception("Agent setup failed")
+        raise HTTPException(502, f"Agent setup failed: {exc}") from exc
+
+
+@app.get("/setup")
+def setup_page():
+    return FileResponse(STATIC / "setup.html")
+
+
+@app.get("/api/calendar-status")
+def calendar_status():
+    from app import booking, gcal
+    status = {"calendar": booking.calendar_name(), "google_configured": gcal.configured(),
+              "contractor_email": settings.contractor_email or None, "timezone": settings.business_tz,
+              "visit_hours": f"{settings.work_days} {settings.business_hours}"}
+    if gcal.configured():
+        try:
+            status["slots_tomorrow"] = len(booking.free_slots(booking.now().date() + booking.timedelta(days=1)))
+            status["google_ok"] = True
+        except Exception as exc:
+            status.update(google_ok=False, google_error=str(exc))
+    return status
 
 
 @app.get("/health")
