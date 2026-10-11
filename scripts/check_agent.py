@@ -33,15 +33,12 @@ def main() -> None:
     print(f"  ✓ project {settings.foundry_project_endpoint}")
     print(f"  ✓ agent '{settings.foundry_agent_name}', voice {settings.speech_voice} ({settings.speech_region})")
 
-    step(2, "Signing in to Microsoft Entra ID")
-    from azure.identity import CredentialUnavailableError, DefaultAzureCredential
+    step(2, "Signing in to Microsoft Entra ID (a browser window may open: sign in with your Azure account)")
     try:
-        DefaultAzureCredential().get_token("https://ai.azure.com/.default")
-    except CredentialUnavailableError:
-        sys.exit("  ✗ Not signed in. Run:  az login --use-device-code   then retry.")
+        foundry_agent.credential().get_token("https://ai.azure.com/.default")
     except Exception as exc:
-        sys.exit(f"  ✗ Sign-in failed: {exc}\n    Run:  az login --use-device-code   (pick the account that owns the "
-                 "Azure subscription), then retry.")
+        sys.exit(f"  ✗ Sign-in failed: {str(exc).splitlines()[0]}\n    Sign in with the account that owns the Azure "
+                 "subscription. No browser here (e.g. Codespaces)? Run  az login --use-device-code  first.")
     print("  ✓ signed in")
 
     step(3, "Talking to your Foundry agent")

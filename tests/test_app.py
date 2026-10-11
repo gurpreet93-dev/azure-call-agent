@@ -53,12 +53,12 @@ def test_agent_is_called_by_name_with_server_side_conversation(monkeypatch):
 
     monkeypatch.setattr(foundry_agent, "settings", dataclasses.replace(
         foundry_agent.settings, foundry_project_endpoint="https://r.services.ai.azure.com/api/projects/p",
-        foundry_agent_name="summit-receptionist"))
+        foundry_agent_name="clearview-glass-agent"))
     monkeypatch.setattr(foundry_agent, "_openai_client", lambda: FakeOpenAI())
     assert foundry_agent.new_conversation() == "conv_9"
     assert foundry_agent.ask("conv_9", "hi") == "Hello there."
     assert sent == {"conversation": "conv_9", "input": "hi",
-                    "extra_body": {"agent_reference": {"name": "summit-receptionist", "type": "agent_reference"}}}
+                    "extra_body": {"agent_reference": {"name": "clearview-glass-agent", "type": "agent_reference"}}}
 
 
 def test_missing_settings_are_reported(monkeypatch):

@@ -1,6 +1,6 @@
 # Foundry Voice Agent
 
-Talk to an AI agent in your own language. The browser turns your speech into text, an agent in
+Phone-style voice assistant for a glass supplier, in the caller's own language. The browser turns your speech into text, an agent in
 **Microsoft Foundry** decides what to say, and **Azure Speech** speaks the reply.
 
 The agent's instructions, knowledge base and model are configured **in Foundry only**. This app
@@ -22,23 +22,47 @@ mic ─► browser speech recognition (language you pick) ─► text
 The earlier full app (bookings, proposals, escalation, Twilio, Pinecone, evals) is on the
 [`full-app`](../../tree/full-app) branch.
 
+## The agent: ClearView Glass Solutions (fictional)
+
+An independent contractor that **supplies and installs Saint-Gobain Glass products** for homes and
+commercial buildings. Callers phone in to ask about the products; the agent answers from the Saint-Gobain
+Glass brochures uploaded to Foundry. ClearView is fictional and is not Saint-Gobain or an authorised partner.
+
 ## 1. Set up the agent in Foundry (portal, ~10 minutes)
 
-1. **Build → Agents → Create agent.** Name: `summit-receptionist`. Model: your `gpt-4o` deployment.
+1. **Build → Agents → Create agent.** Name: `clearview-glass-agent`. Model: your `gpt-4o` deployment.
 2. **Instructions** — paste:
    ```
-   You are the phone receptionist for Summit Roofing, a residential roofing contractor.
-   This is a spoken conversation: reply in one to three short sentences, no lists, no markdown, no emojis.
-   Always reply in the same language the caller is speaking. If they switch language, switch with them.
-   Answer only from the knowledge files. If the answer is not there, say you will have the team follow up.
-   Quote prices only if they appear in the price list, and say they include 13% HST only if the list says so.
-   If water is actively coming in or there is a safety risk, treat it as an emergency: say you are alerting
-   the team and ask for their name, phone number and address. Never promise an arrival time.
-   Collect the caller's name, phone number and address before ending, and confirm them back.
+   You are the phone assistant for ClearView Glass Solutions, an independent contractor that supplies and
+   installs Saint-Gobain Glass products for homes, offices and commercial buildings. Callers ask you about
+   these products. You are not Saint-Gobain and not an official Saint-Gobain representative; if asked, say
+   ClearView is an independent supplier and installer of Saint-Gobain Glass products.
+
+   How you speak
+   - This is a spoken phone call. Reply in one to three short sentences. No lists, markdown, emojis or URLs.
+   - Always reply in the language the caller is speaking. If they switch language, switch with them.
+   - Ask one question at a time.
+
+   What you know
+   - Answer only from the Saint-Gobain Glass brochures in your knowledge files. Search them before answering
+     any product question.
+   - Give technical values (thickness, U-value, solar factor, light transmission, acoustic rating, fire rating,
+     sizes) only exactly as they appear in the brochures. Never estimate, round or combine figures.
+   - If the brochures don't cover something, say so and offer to have a ClearView specialist call back.
+   - The brochures have no prices. Never quote a price; offer a quotation from the team instead.
+
+   Helping the caller
+   - Find out what they need: the project (home, office, facade, shower, partition...), the problem to solve
+     (heat, glare, noise, safety, privacy, decoration) and the location. Suggest products that fit, naming them
+     as the brochures do, and say briefly why.
+   - When they want a quote or a site visit, collect their name, phone number, city and project details,
+     and read them back to confirm.
+   - For installation safety, building-code or certification questions you can't answer from the brochures,
+     offer a specialist callback rather than guessing.
    ```
-3. **Knowledge → Add → Files**: upload the three files in [`sample_kb/`](sample_kb) (company info,
-   customer handbook, price list). Wait until indexing finishes.
-4. **Save**, then try it in the agent playground.
+3. **Knowledge → Add → Files**: upload the Saint-Gobain Glass brochures (PDF). Wait until indexing finishes.
+   Brochures that are scanned images, with no selectable text, can't be searched.
+4. **Save**, then try it in the agent playground: *"Which glass helps keep a west-facing living room cool?"*
 
 ## 2. Give yourself permission to call it
 
@@ -46,22 +70,30 @@ Subscription Owner manages resources but may not include *using* the agent.
 Azure portal → your Foundry resource (`voice-agent-gurpreet`) → **Access control (IAM)** → **Add role
 assignment** → **Azure AI User** → select your account → **Review + assign**. Allow ~5 minutes.
 
-## 3. Run it (GitHub Codespaces, nothing to install)
+## 3. Run it on your computer (Windows)
 
-1. GitHub → **Settings → Codespaces → Secrets**: `FOUNDRY_API_KEY` = the key from the Foundry Home page
-   (used for Azure Speech).
-2. This repo → **Code → Codespaces → Create codespace on main** (or **Rebuild Container** on an existing one,
-   so the Azure CLI is installed).
-3. In the codespace terminal:
-   ```
-   az login --use-device-code
-   python -m scripts.check_agent
-   uvicorn app.main:app
-   ```
-4. Open port 8000, pick a language, tap the microphone and speak.
+Needs Python 3.11+ and Git. In a terminal (VS Code: Ctrl+`), in the folder you cloned:
+```
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+copy .env.example .env
+```
+Put the Foundry key (Foundry Home page → API key) after `SPEECH_KEY=` in `.env`, then:
+```
+python -m scripts.check_agent
+uvicorn app.main:app
+```
+The first run opens a browser window to sign in to Azure; use the account that owns the subscription.
+Open http://localhost:8000 in **Chrome or Edge**, pick a language, tap the microphone and speak.
 
 `scripts/check_agent.py` checks each link in turn (settings, Entra sign-in, the agent, Azure Speech) and says
 what to fix when one fails.
+
+### Or in GitHub Codespaces
+
+Add a Codespaces secret `FOUNDRY_API_KEY` (the Foundry key), create a codespace on `main`, then run
+`az login --use-device-code` before the two commands above.
 
 ## Settings (`.env`)
 

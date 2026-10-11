@@ -2,7 +2,8 @@
 
 Everything the agent knows and how it behaves (instructions, knowledge files, tools, model) is
 configured in Foundry. This module only creates a conversation and sends the user's words to the
-agent by name. Sign-in is Microsoft Entra ID (DefaultAzureCredential: `az login` locally).
+agent by name. Sign-in is Microsoft Entra ID: an existing `az login` if there is one, otherwise a
+browser window opens once to sign in (so nothing else needs installing on a local machine).
 """
 from functools import lru_cache
 
@@ -17,10 +18,15 @@ class AgentNotConfigured(RuntimeError):
 
 
 @lru_cache(maxsize=1)
+def credential() -> DefaultAzureCredential:
+    return DefaultAzureCredential(exclude_interactive_browser_credential=False)
+
+
+@lru_cache(maxsize=1)
 def _openai_client():
     if not settings.foundry_project_endpoint or not settings.foundry_agent_name:
         raise AgentNotConfigured("Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_AGENT_NAME in .env")
-    project = AIProjectClient(endpoint=settings.foundry_project_endpoint, credential=DefaultAzureCredential())
+    project = AIProjectClient(endpoint=settings.foundry_project_endpoint, credential=credential())
     return project.get_openai_client()
 
 
