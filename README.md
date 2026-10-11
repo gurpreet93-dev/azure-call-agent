@@ -143,6 +143,11 @@ The site signs in to Foundry as a **service principal** (an Entra app identity w
 - **Languages.** Browser speech recognition needs to be told the language, hence the picker. The agent
   replies in whatever language it hears; the voice is pinned to the picked language.
 - **If Azure Speech fails**, the browser speaks the reply with its own voice and the reply bubble says so.
+- **Voices.** Each language has a native Azure voice (Hindi: `hi-IN-SwaraNeural`, Indian English: `en-IN-NeerjaNeural`,
+  …; table in `app/speech.py`, override with `SPEECH_VOICES`). Markdown and citation marks are stripped before speaking.
+- **Interrupting.** Tap the mic while the agent talks, or just start talking ("Interrupt by speaking"). Talk-to-interrupt
+  listens for your voice with the browser's echo cancellation; on loud laptop speakers it can mistake the agent's own
+  voice for yours, so use headphones or untick it.
 - **Conversation memory** is held by Foundry (one conversation per page session; **New conversation** resets it).
 - **Not yet:** Foundry *voice agents* (realtime audio end to end) need a `gpt-realtime` deployment; this
   subscription has no quota for it yet.

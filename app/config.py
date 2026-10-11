@@ -19,6 +19,8 @@ class Settings:
     speech_region: str = os.getenv("SPEECH_REGION", "eastus2").strip()
     # Multilingual neural voices speak any supported language with one voice.
     speech_voice: str = os.getenv("SPEECH_VOICE", "en-US-AvaMultilingualNeural").strip()
+    # Optional per-language voice overrides, e.g. "hi-IN=hi-IN-MadhurNeural,pa-IN=pa-IN-OjasNeural"
+    speech_voices: str = os.getenv("SPEECH_VOICES", "")
 
     # Set on a public website so only people you give it to can use (and spend on) the agent.
     # The browser shows its own sign-in box; any username, this password.

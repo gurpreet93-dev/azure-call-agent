@@ -53,6 +53,7 @@
         <option value="zh-CN">中文 (Mandarin)</option>
       </select>
       <label><input type="checkbox" id="handsfree" checked> Keep listening after each reply</label>
+      <label><input type="checkbox" id="bargein" checked> Interrupt by speaking</label>
       <button id="reset">New conversation</button>
     </div>
 
@@ -73,7 +74,8 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let conversationId = null, rec = null, listening = false, busy = false;
+let conversationId = null, rec = null, listening = false, busy = false, speaking = false;
+let finishSpeaking = null;   // resolves the reply that is playing; called with true when interrupted
 const player = new Audio();
 
 function log(cls, text, meta) {
@@ -99,24 +101,74 @@ async function ensureConversation() {
 }
 
 // Reply voice: Azure Speech first; if it fails, the browser's own voice for the same language.
-async function speak(text) {
+// Resolves {via, interrupted}. Tapping the mic or (optionally) starting to talk stops it at once.
+function speak(text) {
   const lang = $('lang').value;
-  try {
-    const r = await api('/api/speak', {text, lang});
-    const url = URL.createObjectURL(await r.blob());
-    player.src = url;
-    await new Promise((resolve, reject) => { player.onended = resolve; player.onerror = reject; player.play().catch(reject); });
-    URL.revokeObjectURL(url);
-    return 'Azure Speech';
-  } catch (e) {
-    if (!window.speechSynthesis) return 'not spoken (' + e.message + ')';
-    await new Promise((resolve) => {
-      const u = new SpeechSynthesisUtterance(text); u.lang = lang; u.onend = resolve; u.onerror = resolve;
-      setTimeout(resolve, 3000 + text.length * 90);  // some browsers never fire onend
+  speaking = true;
+  return new Promise(async (resolve) => {
+    let done = false;
+    finishSpeaking = (interrupted, via) => {
+      if (done) return; done = true; speaking = false; finishSpeaking = null;
+      player.pause(); window.speechSynthesis && speechSynthesis.cancel(); stopBargeIn();
+      resolve({via: via || currentVia, interrupted: !!interrupted});
+    };
+    let currentVia = 'Azure Speech';
+    try {
+      const r = await api('/api/speak', {text, lang});
+      currentVia = 'Azure Speech · ' + (r.headers.get('X-Voice') || '');
+      const url = URL.createObjectURL(await r.blob());
+      if (done) return URL.revokeObjectURL(url);
+      const fin = finishSpeaking;
+      player.src = url;
+      player.onended = () => { URL.revokeObjectURL(url); fin(false); };
+      player.onerror = () => fin(false, 'audio playback failed');
+      await player.play();
+      startBargeIn();
+    } catch (e) {
+      if (done) return;
+      currentVia = 'browser voice (Azure Speech failed: ' + e.message + ')';
+      if (!window.speechSynthesis) return finishSpeaking(false, 'not spoken (' + e.message + ')');
+      const fin = finishSpeaking;                    // this reply's finisher, so stale timers can't end a later reply
+      const u = new SpeechSynthesisUtterance(text); u.lang = lang;
+      u.onend = u.onerror = () => fin(false);
+      setTimeout(() => fin(false), 3000 + text.length * 90);  // some browsers never fire onend
       speechSynthesis.cancel(); speechSynthesis.speak(u);
-    });
-    return 'browser voice (Azure Speech failed: ' + e.message + ')';
-  }
+      startBargeIn();
+    }
+  });
+}
+
+// Barge-in: while a reply plays, watch the microphone level (with echo cancellation, so the agent's own
+// voice mostly doesn't count). A sustained rise in level means the caller started talking.
+let micStream = null, audioCtx = null, bargeTimer = null;
+async function startBargeIn() {
+  if (!$('bargein').checked || !SR || !speaking) return;
+  try {
+    if (!micStream) micStream = await navigator.mediaDevices.getUserMedia(
+      {audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true}});
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+    const analyser = audioCtx.createAnalyser(); analyser.fftSize = 1024;
+    audioCtx.createMediaStreamSource(micStream).connect(analyser);
+    const buf = new Float32Array(analyser.fftSize);
+    let frames = 0, baseline = 0; const recent = [];
+    bargeTimer = setInterval(() => {
+      if (!speaking) return stopBargeIn();
+      analyser.getFloatTimeDomainData(buf);
+      const rms = Math.sqrt(buf.reduce((a, v) => a + v * v, 0) / buf.length);
+      frames++;
+      if (frames <= 6) { baseline = Math.max(baseline, rms); return; }   // first ~300 ms: learn the room + echo level
+      recent.push(rms > Math.max(0.03, baseline * 2.5)); if (recent.length > 8) recent.shift();
+      if (recent.filter(Boolean).length >= 5) interruptAndListen();       // speech in 5 of the last 8 frames (~400 ms)
+    }, 50);
+  } catch { /* no mic permission for barge-in: tapping the mic still interrupts */ }
+}
+function stopBargeIn() { clearInterval(bargeTimer); bargeTimer = null; }
+
+function interruptAndListen() {
+  if (!speaking || !finishSpeaking) return;
+  stoppedByUser = false;
+  finishSpeaking(true);
 }
 
 async function send(text) {
@@ -124,21 +176,25 @@ async function send(text) {
   if (!text || busy) return;
   busy = true; $('mic').disabled = true;
   log('you', text);
+  let interrupted = false;
   try {
     status('Thinking…');
     const id = await ensureConversation();
     const r = await api('/api/chat', {conversation_id: id, text});
     const reply = (await r.json()).reply || '(no reply)';
-    status('Speaking…');
-    const bubble = log('agent', reply);
-    const via = await speak(reply);
-    const m = document.createElement('div'); m.className = 'meta'; m.textContent = 'voice: ' + via;
+    status('Speaking… (tap the mic or just talk to interrupt)');
+    const bubble = log('agent', reply.replace(/【[^】]*】/g, ''));
+    $('mic').disabled = false;                       // the mic button interrupts while speaking
+    const res = await speak(reply);
+    interrupted = res.interrupted;
+    const m = document.createElement('div'); m.className = 'meta';
+    m.textContent = 'voice: ' + res.via + (interrupted ? ' · interrupted' : '');
     bubble.appendChild(m);
   } catch (e) {
     log('sys err', e.message);
   } finally {
     busy = false; $('mic').disabled = false; status('Tap the microphone and speak');
-    if ($('handsfree').checked && SR && !stoppedByUser) startListening();
+    if (SR && !stoppedByUser && (interrupted || $('handsfree').checked)) startListening();
   }
 }
 
@@ -156,13 +212,15 @@ function startListening() {
 function stopListening() { listening = false; $('mic').classList.remove('listening'); try { rec && rec.stop(); } catch {} }
 
 $('mic').onclick = () => {
+  // Create the audio context inside a click, so browsers allow it to run (needed for talk-to-interrupt).
+  try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch {}
   if (!SR) { log('sys err', 'This browser has no speech recognition. Use Chrome or Edge, or type below.'); return; }
+  if (speaking) { interruptAndListen(); return; }   // tap while the agent talks: stop it and listen
   if (listening) { stoppedByUser = true; stopListening(); status('Stopped. Tap the microphone and speak'); return; }
-  player.pause(); window.speechSynthesis && speechSynthesis.cancel();
   stoppedByUser = false; startListening();
 };
 $('typeform').onsubmit = (ev) => { ev.preventDefault(); const t = $('typed').value; $('typed').value = ''; stoppedByUser = true; send(t); };
-$('reset').onclick = () => { conversationId = null; stoppedByUser = true; stopListening(); player.pause(); $('log').innerHTML = ''; log('sys', 'New conversation. The agent has forgotten the previous one.'); };
+$('reset').onclick = () => { conversationId = null; stoppedByUser = true; stopListening(); finishSpeaking && finishSpeaking(true); $('log').innerHTML = ''; log('sys', 'New conversation. The agent has forgotten the previous one.'); };
 $('lang').onchange = () => log('sys', 'Language: ' + $('lang').selectedOptions[0].text + '. Speak in this language; the agent will reply in it.');
 
 if (!SR) log('sys', 'Speech recognition needs Chrome or Edge. You can still type.');

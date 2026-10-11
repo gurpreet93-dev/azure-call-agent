@@ -62,7 +62,7 @@ def main() -> None:
     if not settings.speech_key:
         sys.exit("  ✗ No speech key. Set SPEECH_KEY (or FOUNDRY_API_KEY), the key on the Foundry Home page.")
     try:
-        audio = speech.synthesize("नमस्ते, यह एक परीक्षण है।", "hi-IN")  # a non-English line proves the multilingual voice
+        audio = speech.synthesize("नमस्ते, यह एक परीक्षण है।", "hi-IN")  # Hindi line: exercises the native Hindi voice
     except speech.SpeechError as exc:
         hint = ("Key rejected: use the API key from the Foundry Home page." if " 401" in str(exc) else
                 f"Check SPEECH_REGION ('{settings.speech_region}') is your resource's region and "
@@ -70,7 +70,7 @@ def main() -> None:
         sys.exit(f"  ✗ {exc}\n    {hint}")
     except Exception as exc:
         sys.exit(f"  ✗ Couldn't reach Azure Speech: {exc}")
-    print(f"  ✓ got {len(audio):,} bytes of audio (Hindi test sentence)")
+    print(f"  ✓ got {len(audio):,} bytes of audio (Hindi test sentence, voice {speech.voice_for('hi-IN')})")
     print("\nAll good. Start the screen:  uvicorn app.main:app")
 
 

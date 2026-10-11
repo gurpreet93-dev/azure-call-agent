@@ -22,7 +22,7 @@ def test_conversation_chat_and_speak_go_to_foundry_and_speech(client, monkeypatc
     calls = []
     monkeypatch.setattr(foundry_agent, "new_conversation", lambda: "conv_123")
     monkeypatch.setattr(foundry_agent, "ask", lambda cid, text: calls.append((cid, text)) or "Namaste! Kaise madad karun?")
-    monkeypatch.setattr(speech, "synthesize", lambda text, lang=None: b"ID3fake-mp3")
+    monkeypatch.setattr(speech, "synthesize_with_voice", lambda text, lang=None: (b"ID3fake-mp3", "hi-IN-SwaraNeural"))
 
     cid = client.post("/api/conversation").json()["conversation_id"]
     reply = client.post("/api/chat", json={"conversation_id": cid, "text": "Mera chhat tapak raha hai"}).json()["reply"]
@@ -31,13 +31,14 @@ def test_conversation_chat_and_speak_go_to_foundry_and_speech(client, monkeypatc
     assert cid == "conv_123" and calls == [("conv_123", "Mera chhat tapak raha hai")]
     assert reply.startswith("Namaste")
     assert audio.status_code == 200 and audio.headers["content-type"] == "audio/mpeg" and audio.content == b"ID3fake-mp3"
+    assert audio.headers["x-voice"] == "hi-IN-SwaraNeural"
 
 
 def test_failures_return_readable_errors(client, monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("PermissionDenied")
     monkeypatch.setattr(foundry_agent, "ask", boom)
-    monkeypatch.setattr(speech, "synthesize", boom)
+    monkeypatch.setattr(speech, "synthesize_with_voice", boom)
     r = client.post("/api/chat", json={"conversation_id": "c", "text": "hi"})
     assert r.status_code == 502 and "PermissionDenied" in r.json()["detail"]
     assert client.post("/api/speak", json={"text": "hi"}).status_code == 502  # browser then uses its own voice
@@ -75,6 +76,36 @@ def test_ssml_escapes_text_and_pins_language():
     assert "&lt;$500&gt; &amp;" in xml and "<lang xml:lang=\"hi-IN\">" in xml
     assert "<voice name=\"en-US-AvaMultilingualNeural\">" in xml
     assert "<lang" not in speech.ssml("hi", None, "v")
+    native = speech.ssml("नमस्ते", "hi-IN", "hi-IN-SwaraNeural")   # native voice: no <lang>, document in Hindi
+    assert "<lang" not in native and "xml:lang=\"hi-IN\"" in native
+
+
+def test_each_language_gets_a_native_voice_with_overrides(monkeypatch):
+    assert speech.voice_for("hi-IN") == "hi-IN-SwaraNeural"
+    assert speech.voice_for("en-US") == speech.settings.speech_voice      # not in the table: default voice
+    monkeypatch.setattr(speech, "settings", dataclasses.replace(speech.settings,
+                                                                speech_voices="hi-IN=hi-IN-MadhurNeural, xx=  "))
+    assert speech.voice_for("hi-IN") == "hi-IN-MadhurNeural"
+
+
+def test_rejected_native_voice_falls_back_to_multilingual(monkeypatch):
+    tried = []
+
+    def fake_post(url, content, timeout, headers):
+        voice = "hi-IN-SwaraNeural" if "SwaraNeural" in content.decode() else "multi"
+        tried.append(voice)
+        return NS(status_code=400 if voice == "hi-IN-SwaraNeural" else 200, content=b"mp3", text="bad voice",
+                  reason_phrase="")
+
+    monkeypatch.setattr(speech, "settings", dataclasses.replace(speech.settings, speech_key="k"))
+    monkeypatch.setattr(speech.httpx, "post", fake_post)
+    audio, voice = speech.synthesize_with_voice("नमस्ते", "hi-IN")
+    assert tried == ["hi-IN-SwaraNeural", "multi"] and voice == speech.settings.speech_voice
+
+
+def test_formatting_is_not_read_aloud():
+    raw = "Options:\n\n1. **SGG Antelio Plus** - solar control 【4:0†source】\n- [Cool-lite](http://x) colours"
+    assert speech.speakable(raw) == "Options: SGG Antelio Plus - solar control Cool-lite colours"
 
 
 def test_speech_request_shape(monkeypatch):
