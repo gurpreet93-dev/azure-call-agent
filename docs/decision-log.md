@@ -88,6 +88,11 @@ Managed speech costs roughly a cent or two per minute [Guessing]. That's a small
 - **Why not the cheapest GPT model?** The saving is fractions of a cent per call, and the app is written against Claude's Messages API. Switching would mean rewriting the agent loop for no visible gain.
 - **Latency.** Haiku 5.5 thinks before every reply by default, which a caller hears as dead air. `AGENT_THINKING=off` with `AGENT_EFFORT=low` turns that off. If the scenario eval shows wrong actions, try `AGENT_THINKING=adaptive` first, before moving up a model size.
 
+**Update 2: GPT-4o on Azure OpenAI is the default; Claude stays one setting away.**
+- **Why:** a new pay-as-you-go Azure subscription had 0 tokens-per-minute quota for every Claude model and for every GPT model on Global Standard. Approval takes days. GPT-4o had 50K TPM of *Standard* (single-region) quota in East US 2 straight away. With the demo a week out, a model I can deploy today beats a better-priced one I can't.
+- **How, without forking the agent:** `app/llm_openai.py` exposes the same `messages.create` interface the agent already uses and translates to Chat Completions (tools → functions, `tool_result` → `tool` messages). The agent loop, tools, stored transcripts and tests are unchanged. `LLM_PROVIDER=foundry` switches back to Claude once quota is approved.
+- **Trade-off:** Claude-only features (explicit prompt caching breakpoints, thinking/effort control) are dropped for GPT. Azure OpenAI caches long repeated prefixes automatically, so cost per call stays low.
+
 ---
 
 ## D4. Chunking strategy

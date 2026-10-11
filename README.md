@@ -1,6 +1,6 @@
 # Azure Call Agent
 
-An AI phone receptionist, with Claude running in **Microsoft Foundry** on Azure, for trade contractors (roofers, fabricators, applicators). A contractor
+An AI phone receptionist, with its model (GPT-4o, or Claude) running in **Microsoft Foundry** on Azure, for trade contractors (roofers, fabricators, applicators). A contractor
 uploads their own documents; callers phone in; the agent answers questions from those documents and
 **decides** what to do: book a site visit (Outlook invite to caller + contractor), email a preliminary
 estimate, or escalate an emergency to the contractor.
@@ -9,14 +9,15 @@ estimate, or escalate an emergency to the contractor.
 
 | Job | Azure service | Status |
 |---|---|---|
-| The agent's model (Claude) | **Microsoft Foundry** model deployment | ✅ default (`LLM_PROVIDER=foundry`) |
+| The agent's model | **Microsoft Foundry**: GPT-4o via Azure OpenAI (default), or Claude | ✅ `LLM_PROVIDER=azure-openai` / `foundry` |
 | Outlook calendar invites + email | **Microsoft Graph** (Entra ID app registration) | ✅ optional; mock calendar/outbox without it |
 | Knowledge-base search | Azure AI Search | planned (Pinecone today) |
 | Phone line | Azure Communication Services | planned (Twilio today) |
 | Hosting | Azure Container Apps | planned (runs locally today) |
 
-The agent decides for itself which action fits the call; there is no fixed script. Switching
-`LLM_PROVIDER=anthropic` runs the identical agent against the Anthropic API, as a fallback.
+The agent decides for itself which action fits the call; there is no fixed script. The agent loop
+is written once; `LLM_PROVIDER` picks GPT on Azure OpenAI (`azure-openai`, translated by
+`app/llm_openai.py`), Claude on Foundry (`foundry`), or Claude on the Anthropic API (`anthropic`).
 
 Product decisions and trade-offs: [`docs/decision-log.md`](docs/decision-log.md).
 Step-by-step setup of Claude, Pinecone, ngrok, Twilio and Outlook: [`docs/integration-guide.md`](docs/integration-guide.md).
@@ -25,7 +26,7 @@ Step-by-step setup of Claude, Pinecone, ngrok, Twilio and Outlook: [`docs/integr
 Caller ─► Twilio number ─► /voice/* webhooks ──────┐
 Browser "test call" (mic + speaker) ─► /api/sim/* ─┤
                                                    ▼
-                  Agent loop: Claude on Microsoft Foundry + tools (app/agent.py)
+                  Agent loop: GPT-4o / Claude on Microsoft Foundry + tools (app/agent.py)
    ┌─────────────┬────────────────────┬───────────────┬────────────────────┬──────────┐
  knowledge     check_availability    send_proposal   escalate_to_         end_call
  (full prompt  book_site_visit       (KB prices      contractor
@@ -65,17 +66,19 @@ search (BM25), and bookings/emails go to the built-in calendar and outbox (see *
 
 ## Connect Microsoft Foundry
 
-1. In the Foundry portal (ai.azure.com), create a project, then **Models + endpoints → Deploy model**
-   and deploy a Claude model (Claude Haiku 5.5, base model, Global Standard). Note the **deployment name**.
+1. In the Foundry portal (ai.azure.com), create a project, then deploy **gpt-4o** with
+   **Deploy → Custom settings → Standard** (new accounts often have Standard quota but none for
+   Global Standard; check Manage → Quota). Note the **deployment name**. For Claude, deploy
+   Claude Haiku 5.5 instead and set `LLM_PROVIDER=foundry`.
 2. On the project's **Overview** page, copy the API key and the endpoint
    `https://<resource>.services.ai.azure.com`.
-3. In `.env`: `FOUNDRY_RESOURCE=<resource>` (the name only), `FOUNDRY_API_KEY=<key>`,
-   `AGENT_MODEL=<deployment name>`.
+3. In `.env`: `LLM_PROVIDER=azure-openai`, `FOUNDRY_RESOURCE=<resource>` (the name only),
+   `FOUNDRY_API_KEY=<key>`, `AGENT_MODEL=<deployment name>`.
 4. Run `python -m scripts.check_foundry`. It sends one message and one tool call, and explains
    any failure (wrong key, wrong deployment name, missing role, quota).
 
-The app uses the Anthropic SDK's `AnthropicFoundry` client, so prompt caching and tool use work the
-same as on the Anthropic API.
+GPT goes through the OpenAI SDK against the resource's Azure OpenAI v1 endpoint; Claude goes through
+the Anthropic SDK's `AnthropicFoundry` client. Both use the same key.
 
 ## Turn on Pinecone
 
@@ -160,7 +163,8 @@ failure, and the Twilio webhook flow.
 ```
 app/
   main.py            routes: auth, dashboard, KB, settings, calls, outbox, simulator API
-  agent.py           system prompt + Claude tool-use loop (Foundry or Anthropic API) (append-only history, prompt caching)
+  agent.py           system prompt + tool-use loop (GPT or Claude)
+  llm_openai.py      GPT adapter: Chat Completions behind the same messages.create interface (append-only history, prompt caching)
   tools.py           agent tools: validation, slot finding, booking, proposals, escalation
   knowledge.py       parsing (docx/xlsx/pdf/txt), chunking, size-based routing, BM25 fallback
   vectorstore.py     Pinecone (namespace per contractor, integrated embedding)

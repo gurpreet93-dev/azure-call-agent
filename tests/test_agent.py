@@ -104,6 +104,12 @@ def test_client_targets_foundry_or_anthropic_by_setting(monkeypatch):
     c = agent.make_client()
     assert type(c) is anthropic.Anthropic
 
+    from app.llm_openai import AzureOpenAIClient
+    monkeypatch.setattr(agent, "settings", dataclasses.replace(foundry, llm_provider="azure-openai"))
+    c = agent.make_client()
+    assert isinstance(c, AzureOpenAIClient)
+    assert str(c._client.base_url) == "https://demo-res.openai.azure.com/openai/v1/"
+
     monkeypatch.setattr(agent, "settings", dataclasses.replace(foundry, llm_provider="openai"))
     import pytest
     with pytest.raises(ValueError):
@@ -116,7 +122,7 @@ def test_model_options_follow_settings(monkeypatch):
     import pytest
 
     def opts(**kw):
-        monkeypatch.setattr(agent, "settings", dataclasses.replace(agent.settings, **kw))
+        monkeypatch.setattr(agent, "settings", dataclasses.replace(agent.settings, llm_provider="foundry", **kw))
         return agent.model_options()
 
     assert opts(agent_thinking="off", agent_effort="low") == {
@@ -125,3 +131,6 @@ def test_model_options_follow_settings(monkeypatch):
     assert opts(agent_thinking="model-default", agent_effort="") == {}  # Haiku 4.5: send nothing
     with pytest.raises(ValueError):
         opts(agent_thinking="maybe")
+    monkeypatch.setattr(agent, "settings", dataclasses.replace(agent.settings, llm_provider="azure-openai",
+                                                               agent_thinking="off", agent_effort="low"))
+    assert agent.model_options() == {}  # Claude-only options are never sent to GPT
