@@ -59,7 +59,8 @@ def test_agent_is_called_by_name_with_server_side_conversation(monkeypatch):
     assert foundry_agent.new_conversation() == "conv_9"
     assert foundry_agent.ask("conv_9", "hi") == "Hello there."
     assert sent == {"conversation": "conv_9", "input": "hi",
-                    "extra_body": {"agent_reference": {"name": "clearview-glass-agent", "type": "agent_reference"}}}
+                    "extra_body": {"agent_reference": {"name": "clearview-glass-agent", "type": "agent_reference"}},
+                    "max_output_tokens": 400, "max_tool_calls": 2, "truncation": "auto"}
 
 
 def test_missing_settings_are_reported(monkeypatch):
@@ -219,3 +220,22 @@ def test_rate_limit_gives_a_plain_message(client, monkeypatch):
     monkeypatch.setattr(foundry_agent, "ask", limited)
     r = client.post("/api/chat", json={"conversation_id": "c", "text": "hi"})
     assert r.status_code == 429 and "tokens-per-minute" in r.json()["detail"]
+
+
+def test_limits_dropped_if_the_agent_service_refuses_them(monkeypatch):
+    import httpx
+    import openai
+    calls = []
+
+    def create(**kw):
+        calls.append(kw)
+        if "max_output_tokens" in kw:
+            raise openai.BadRequestError("Unsupported parameter: 'max_output_tokens'", response=httpx.Response(
+                400, request=httpx.Request("POST", "https://x")), body=None)
+        return NS(output_text="ok")
+
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: NS(responses=NS(create=create)))
+    monkeypatch.setattr(foundry_agent, "_limits_supported", True)
+    assert foundry_agent.ask("c", "hi") == "ok" and foundry_agent.ask("c", "again") == "ok"
+    assert [("max_output_tokens" in c) for c in calls] == [True, False, False]   # learns after the first refusal
+    monkeypatch.setattr(foundry_agent, "_limits_supported", True)

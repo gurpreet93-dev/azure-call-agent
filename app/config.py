@@ -12,6 +12,9 @@ class Settings:
     # Project endpoint: Foundry portal -> your project -> Home -> "Project endpoint".
     foundry_project_endpoint: str = os.getenv("FOUNDRY_PROJECT_ENDPOINT", "").strip().rstrip("/")
     foundry_agent_name: str = os.getenv("FOUNDRY_AGENT_NAME", "").strip()
+    # Cap on each reply's length. Spoken replies are 1-3 sentences; the cap also keeps each request's
+    # tokens-per-minute charge small.
+    agent_max_output_tokens: int = int(os.getenv("AGENT_MAX_OUTPUT_TOKENS", "400"))
 
     # Azure Speech (part of the same Foundry resource) speaks the agent's replies.
     # The Foundry resource's API key works here; SPEECH_KEY falls back to FOUNDRY_API_KEY.

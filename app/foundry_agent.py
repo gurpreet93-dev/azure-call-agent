@@ -7,6 +7,7 @@ browser window opens once to sign in (so nothing else needs installing on a loca
 """
 from functools import lru_cache
 
+import openai
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
 
@@ -42,6 +43,23 @@ def new_conversation() -> str:
     return _openai_client().conversations.create().id
 
 
+# Azure counts each request against the tokens-per-minute limit as its input PLUS the most it may write, so an
+# uncapped request "costs" thousands of tokens even for a one-sentence reply. Spoken replies are short.
+LIMITS = {"max_output_tokens": settings.agent_max_output_tokens, "max_tool_calls": 2, "truncation": "auto"}
+_limits_supported = True
+
+
 def ask(conversation_id: str, text: str) -> str:
-    response = _openai_client().responses.create(conversation=conversation_id, input=text, extra_body=_agent_ref())
+    global _limits_supported
+    client = _openai_client()
+    if _limits_supported:
+        try:
+            response = client.responses.create(conversation=conversation_id, input=text, extra_body=_agent_ref(),
+                                               **LIMITS)
+            return (response.output_text or "").strip()
+        except openai.BadRequestError as exc:      # the agent service refused one of the limits: go without them
+            if not any(k in str(exc) for k in LIMITS):
+                raise
+            _limits_supported = False
+    response = client.responses.create(conversation=conversation_id, input=text, extra_body=_agent_ref())
     return (response.output_text or "").strip()
