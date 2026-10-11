@@ -1,0 +1,95 @@
+{% extends "base.html" %}{% block title %}Test call{% endblock %}
+{% block head %}
+<style>
+.wrap{display:grid;grid-template-columns:1.4fr 1fr;gap:18px}@media(max-width:800px){.wrap{grid-template-columns:1fr}}
+#log{height:440px;overflow-y:auto;padding-right:6px}
+.msg{padding:9px 12px;border-radius:10px;margin:6px 0;max-width:85%}
+.msg.agent{background:#eef2ff}.msg.caller{background:#e7f6ec;margin-left:auto}
+.msg.sys{background:none;color:var(--muted);font-size:13px;text-align:center;max-width:100%}
+#actions .a{border-left:3px solid var(--accent);padding:4px 10px;margin:8px 0;font-size:13px}
+#actions .a.bad{border-color:var(--bad)}
+#mic.live{background:var(--bad)}
+</style>
+{% endblock %}
+{% block content %}
+<h1>Test call</h1>
+<p class="muted small">Talk to the agent exactly as a caller would. It uses the same agent as the phone line.
+Voice uses your browser's speech recognition and speech synthesis (Chrome or Edge recommended); you can also type.
+Knowledge base: <b>{{ 'full-context' if kb.mode == 'full_context' else 'retrieval via ' ~ kb.backend }}</b>.</p>
+<div class="wrap">
+  <div class="card">
+    <div class="row" style="margin-bottom:10px">
+      <button id="start">📞 Start call</button>
+      <button id="hangup" class="danger" disabled>Hang up</button>
+      <label class="small" style="margin:0 0 0 auto;font-weight:400"><input type="checkbox" id="speak" checked style="width:auto"> Speak replies</label>
+    </div>
+    <div id="log"><div class="msg sys">Press "Start call".</div></div>
+    <form id="form" class="row" style="margin-top:10px">
+      <button type="button" id="mic" class="secondary" disabled title="Hold a conversation by voice">🎤</button>
+      <input id="text" placeholder="Type what the caller says…" disabled autocomplete="off">
+      <button id="send" disabled>Send</button>
+    </form>
+  </div>
+  <div class="card">
+    <h2>Agent decisions (live)</h2>
+    <div id="actions" class="muted small">Tool calls appear here as the agent makes them.</div>
+    <p id="calllink" class="small"></p>
+  </div>
+</div>
+<script>
+let callId = null, busy = false, listening = false;
+const $ = id => document.getElementById(id);
+const log = (cls, text) => { const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text; $('log').appendChild(d); $('log').scrollTop = 1e9; };
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null;
+if (SR) {
+  rec = new SR(); rec.lang = 'en-US'; rec.interimResults = false; rec.continuous = false;
+  rec.onresult = e => { const t = e.results[0][0].transcript; if (t.trim()) send(t); };
+  rec.onend = () => { listening = false; $('mic').classList.remove('live'); };
+}
+function speak(text, then) {
+  if (!$('speak').checked || !window.speechSynthesis || !text) { then && then(); return; }
+  const u = new SpeechSynthesisUtterance(text); u.rate = 1.05;
+  u.onend = () => then && then();
+  speechSynthesis.cancel(); speechSynthesis.speak(u);
+}
+function listen() { if (rec && callId && !busy && !listening) { try { rec.start(); listening = true; $('mic').classList.add('live'); } catch (e) {} } }
+function enable(on) { ['text','send','hangup'].forEach(i => $(i).disabled = !on); $('mic').disabled = !on || !rec; $('start').disabled = on; }
+function showActions(actions) {
+  if (!actions.length) return;
+  if ($('actions').classList.contains('muted')) { $('actions').innerHTML = ''; $('actions').classList.remove('muted'); }
+  for (const a of actions) {
+    const d = document.createElement('div'); d.className = 'a' + (a.ok ? '' : ' bad');
+    d.innerHTML = '<b></b><pre></pre>';
+    d.querySelector('b').textContent = (a.ok ? '✓ ' : '✗ ') + a.tool;
+    d.querySelector('pre').textContent = JSON.stringify({input: a.input, result: a.result}, null, 1).slice(0, 900);
+    $('actions').appendChild(d);
+  }
+}
+$('start').onclick = async () => {
+  $('log').innerHTML = ''; $('actions').innerHTML = 'Tool calls appear here as the agent makes them.'; $('actions').classList.add('muted');
+  const r = await fetch('/api/sim/start', {method: 'POST'}); const j = await r.json();
+  callId = j.call_id; enable(true); log('agent', j.say); speak(j.say, listen);
+};
+async function send(text) {
+  if (!callId || busy) return;
+  busy = true; log('caller', text); $('text').value = ''; const thinking = document.createElement('div');
+  thinking.className = 'msg sys'; thinking.textContent = '…'; $('log').appendChild(thinking);
+  const t0 = performance.now();
+  try {
+    const r = await fetch(`/api/sim/${callId}/turn`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text})});
+    const j = await r.json(); thinking.remove();
+    if (!r.ok) { log('sys', 'Error: ' + (j.detail || r.status)); return; }
+    showActions(j.actions);
+    log('agent', j.say); log('sys', `${((performance.now() - t0) / 1000).toFixed(1)}s`);
+    $('calllink').innerHTML = `<a href="/calls/${j.call_db_id}">Open call record →</a>`;
+    busy = false;
+    if (j.ended) { speak(j.say); log('sys', 'Call ended by agent.'); callId = null; enable(false); }
+    else speak(j.say, listen);
+  } finally { busy = false; }
+}
+$('form').onsubmit = e => { e.preventDefault(); const t = $('text').value.trim(); if (t) send(t); };
+$('mic').onclick = () => listening ? rec.stop() : listen();
+$('hangup').onclick = async () => { speechSynthesis && speechSynthesis.cancel(); if (callId) await fetch(`/api/sim/${callId}/hangup`, {method: 'POST'}); log('sys', 'You hung up.'); callId = null; enable(false); };
+</script>
+{% endblock %}

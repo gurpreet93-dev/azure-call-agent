@@ -1,0 +1,23 @@
+{% extends "base.html" %}{% block title %}{{ doc.filename }}{% endblock %}
+{% block content %}
+<h1>{{ doc.filename }}</h1>
+<p class="muted small">{{ "{:,}".format(doc.token_estimate) }} tokens · {{ chunks|length }} stored chunks · <a href="/knowledge">← back</a></p>
+<div class="card">
+  <h2>Chunking preview</h2>
+  <p class="small muted">Try a strategy on this document without changing anything. The stored chunks use the
+  settings in <code>.env</code> (CHUNK_METHOD / CHUNK_MAX_CHARS / CHUNK_OVERLAP / CHUNK_CONTEXT).</p>
+  <form class="row" style="flex-wrap:wrap">
+    <div><label>Method</label><select name="method">{% for m in methods %}<option {% if m == cfg.method %}selected{% endif %}>{{ m }}</option>{% endfor %}</select></div>
+    <div><label>Max chars</label><input name="size" type="number" value="{{ cfg.max_chars }}" min="100" step="50" style="width:110px"></div>
+    <div><label>Overlap</label><input name="overlap" type="number" value="{{ cfg.overlap }}" min="0" step="25" style="width:100px"></div>
+    <div><label>Label</label><select name="context"><option {% if cfg.context == 'path' %}selected{% endif %}>path</option><option {% if cfg.context == 'none' %}selected{% endif %}>none</option></select></div>
+    <div style="align-self:flex-end"><button>Preview</button></div>
+  </form>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+</div>
+{% set shown = preview if preview is not none else chunks %}
+<h2>{% if preview is not none %}Preview: {{ cfg.label }} · {{ preview|length }} chunks{% else %}Stored chunks{% endif %}</h2>
+{% for c in shown %}<div class="card"><div class="small muted">Chunk {{ loop.index0 }} · {{ c.text|length }} chars{% if c.section %} · {{ c.section }}{% endif %}
+  {% if preview is none %} · {% if c.synced %}<span class="pill ok">in Pinecone</span>{% else %}<span class="pill">local only</span>{% endif %}{% endif %}</div>
+  <pre>{{ c.text }}</pre></div>{% endfor %}
+{% endblock %}

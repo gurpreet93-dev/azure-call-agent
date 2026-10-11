@@ -1,0 +1,9 @@
+{% if calls %}<table><tr><th>Started</th><th>Caller</th><th>Channel</th><th>Outcome</th><th>Summary</th></tr>
+{% for c in calls %}<tr>
+  <td><a href="/calls/{{ c.id }}">{{ c.started_at[:16].replace('T',' ') }}</a></td>
+  <td>{{ c.caller_name or '—' }}<br><span class="small muted">{{ c.caller_phone or c.caller_number or '' }}</span></td>
+  <td><span class="pill">{{ c.channel }}</span></td>
+  <td>{% if c.outcome %}<span class="pill {{ 'ok' if c.outcome in ('visit_booked','proposal_sent') else 'warn' if c.outcome in ('escalated','caller_hung_up') else '' }}">{{ c.outcome.replace('_',' ') }}</span>{% elif c.status == 'active' %}<span class="pill">in progress</span>{% endif %}</td>
+  <td class="small">{{ c.summary or c.job_summary or '' }}</td>
+</tr>{% endfor %}</table>
+{% else %}<p class="muted">No calls yet.</p>{% endif %}

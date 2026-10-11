@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block title %}Log in{% endblock %}
+{% block content %}
+<div class="card" style="max-width:420px;margin:40px auto">
+  <h1>Log in</h1>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post" action="/login">
+    <label>Email</label><input name="email" type="email" required>
+    <label>Password</label><input name="password" type="password" required>
+    <p><button>Log in</button></p>
+  </form>
+  <p class="small muted">New contractor? <a href="/signup">Create an account</a></p>
+</div>
+{% endblock %}

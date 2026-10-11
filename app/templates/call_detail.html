@@ -1,0 +1,25 @@
+{% extends "base.html" %}{% block title %}Call {{ call.id }}{% endblock %}
+{% block content %}
+<h1>Call · {{ call.started_at[:16].replace('T',' ') }} <span class="pill">{{ call.channel }}</span>
+{% if call.outcome %}<span class="pill ok">{{ call.outcome.replace('_',' ') }}</span>{% endif %}</h1>
+<div class="grid">
+  <div class="card"><h2>Caller</h2>
+    <div>{{ call.caller_name or '—' }}</div><div class="small">{{ call.caller_phone or call.caller_number or '' }}</div>
+    <div class="small">{{ call.caller_email or '' }}</div><div class="small">{{ call.site_address or '' }}</div>
+  </div>
+  <div class="card"><h2>Summary</h2><div class="small">{{ call.summary or call.job_summary or 'No summary yet.' }}</div></div>
+</div>
+<div class="card"><h2>Decisions the agent made</h2>
+  {% if actions %}<table><tr><th>Action</th><th>Input</th><th>Result</th></tr>
+  {% for a in actions %}<tr><td><span class="pill {{ 'ok' if a.ok else 'bad' }}">{{ a.type }}</span></td>
+    <td><pre>{{ a.payload|tojson(indent=1) }}</pre></td><td><pre>{{ a.result|tojson(indent=1) }}</pre></td></tr>{% endfor %}</table>
+  {% else %}<p class="muted">No tools used.</p>{% endif %}
+</div>
+{% if emails %}<div class="card"><h2>Emails sent</h2><table>{% for e in emails %}<tr><td><a href="/outbox/{{ e.id }}">{{ e.subject }}</a></td><td>{{ e.to_addr }}</td><td><span class="pill">{{ e.provider }}</span></td></tr>{% endfor %}</table></div>{% endif %}
+<div class="card"><h2>Transcript</h2>
+  {% for t in transcript %}<div style="margin-bottom:8px">
+    {% if t.role == 'tool' %}<div class="small muted">⚙ {{ t.content[:400] }}</div>
+    {% else %}<b>{{ 'Caller' if t.role == 'caller' else 'Agent' }}:</b> {{ t.content }}{% endif %}
+  </div>{% endfor %}
+</div>
+{% endblock %}

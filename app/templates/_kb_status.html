@@ -1,0 +1,10 @@
+<div class="row" style="justify-content:space-between;flex-wrap:wrap">
+  <div>
+    {% if kb.mode == 'full_context' %}<span class="pill ok">Full-context mode</span>
+    <span class="small muted">All documents are loaded into the agent's prompt (cached). Nothing can be missed by retrieval.</span>
+    {% else %}<span class="pill warn">Retrieval mode · {{ kb.backend }}</span>
+    <span class="small muted">The knowledge base is too large for the prompt; the agent searches it per question.</span>{% endif %}
+  </div>
+  <div class="small muted">{{ "{:,}".format(kb.tokens) }} / {{ "{:,}".format(kb.threshold) }} tokens · {{ kb.documents }} document(s){% if kb.mode == 'retrieval' and kb.unsynced_chunks %} · <span class="error">{{ kb.unsynced_chunks }} chunks not yet in Pinecone</span>{% endif %}</div>
+</div>
+<div class="meter" style="margin-top:8px"><div style="width:{{ [100, (kb.tokens / kb.threshold * 100)|round]|min }}%"></div></div>

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Call Agent{% endblock %}</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#1d2330;--muted:#667085;--line:#e4e7ec;--accent:#2457d6;--ok:#127a43;--warn:#b54708;--bad:#b42318}
+*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;background:var(--bg);color:var(--text)}
+nav{background:#14213d;color:#fff;padding:0 16px;display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+nav a{color:#cfd8ea;text-decoration:none;padding:14px 10px;display:inline-block}nav a:hover,nav a.on{color:#fff}
+nav .brand{font-weight:700;color:#fff;margin-right:12px}nav .right{margin-left:auto}
+main{max-width:1100px;margin:24px auto;padding:0 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:18px}
+h1{font-size:22px;margin:0 0 16px}h2{font-size:17px;margin:0 0 12px}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:13px;color:var(--muted);font-weight:600}
+.muted{color:var(--muted)}.small{font-size:13px}
+.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;background:#eef2ff;color:var(--accent)}
+.pill.ok{background:#e7f6ec;color:var(--ok)}.pill.warn{background:#fef0e6;color:var(--warn)}.pill.bad{background:#fdecea;color:var(--bad)}
+input,select,textarea{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;width:100%;background:#fff}
+button,.btn{font:inherit;background:var(--accent);color:#fff;border:0;border-radius:8px;padding:9px 16px;cursor:pointer;text-decoration:none;display:inline-block}
+button.secondary{background:#fff;color:var(--text);border:1px solid var(--line)}button.danger{background:var(--bad)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
+.stat{font-size:28px;font-weight:700}
+.flash{background:#eef2ff;border:1px solid #c7d4fb;border-radius:8px;padding:10px 14px;margin-bottom:16px}
+.error{color:var(--bad)}pre{white-space:pre-wrap;word-break:break-word;background:#f4f5f7;padding:10px;border-radius:8px;font-size:13px;margin:0}
+label{display:block;margin:10px 0 4px;font-weight:600;font-size:14px}
+.row{display:flex;gap:10px;align-items:center}
+.meter{height:10px;background:#eef0f3;border-radius:6px;overflow:hidden}.meter>div{height:100%;background:var(--accent)}
+a{color:var(--accent)}
+</style>
+{% block head %}{% endblock %}
+</head>
+<body>
+<nav>
+  <span class="brand">☎ Call Agent</span>
+  {% if me %}
+  <a href="/dashboard">Dashboard</a><a href="/knowledge">Knowledge base</a><a href="/simulator">Test call</a>
+  <a href="/calls">Calls</a><a href="/outbox">Emails &amp; invites</a><a href="/settings">Settings</a>
+  <span class="right small">{{ me.business_name }} · <a href="/logout" style="padding:0;color:#cfd8ea">Log out</a></span>
+  {% endif %}
+</nav>
+<main>{% block content %}{% endblock %}</main>
+</body>
+</html>

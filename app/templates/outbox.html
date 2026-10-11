@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block title %}Emails &amp; invites{% endblock %}
+{% block content %}
+<h1>Emails &amp; invites</h1>
+<p class="muted small">Every email the agent sent. Provider "mock" means the built-in demo outbox (nothing left this server); "graph" means sent from Outlook.</p>
+<div class="card">{% if emails %}<table><tr><th>Sent</th><th>To</th><th>Subject</th><th></th></tr>
+{% for e in emails %}<tr><td class="small">{{ e.created_at[:16].replace('T',' ') }}</td><td>{{ e.to_addr }}</td>
+<td><a href="/outbox/{{ e.id }}">{{ e.subject }}</a> {% if e.has_invite %}<span class="pill">📅 invite</span>{% endif %}</td>
+<td><span class="pill">{{ e.provider }}</span></td></tr>{% endfor %}</table>
+{% else %}<p class="muted">Nothing sent yet.</p>{% endif %}</div>
+{% endblock %}

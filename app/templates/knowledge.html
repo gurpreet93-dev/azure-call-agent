@@ -1,0 +1,27 @@
+{% extends "base.html" %}{% block title %}Knowledge base{% endblock %}
+{% block content %}
+<h1>Knowledge base</h1>
+{% if flash %}<div class="flash">{% for m in flash %}<div>{{ m }}</div>{% endfor %}</div>{% endif %}
+<div class="card">{% include "_kb_status.html" %}</div>
+<div class="card">
+  <h2>Upload documents</h2>
+  <p class="small muted">Company info, services, price list, warranty, FAQs. Supported: {{ supported }} (Word, Excel, PDF, text).
+  Headings in Word documents are kept as sections; each Excel row stays together with its column names.</p>
+  <form method="post" action="/knowledge/upload" enctype="multipart/form-data" class="row">
+    <input type="file" name="files" multiple required accept=".pdf,.docx,.xlsx,.txt,.md,.csv">
+    <button>Upload</button>
+  </form>
+</div>
+<div class="card">
+  <h2>Documents</h2>
+  {% if docs %}<table><tr><th>File</th><th>Tokens</th><th>Chunks</th><th>In Pinecone</th><th></th></tr>
+  {% for d in docs %}<tr>
+    <td><a href="/knowledge/{{ d.id }}">{{ d.filename }}</a><br><span class="small muted">{{ d.created_at[:16].replace('T',' ') }}</span></td>
+    <td>{{ "{:,}".format(d.token_estimate) }}</td><td>{{ d.chunk_count }}</td>
+    <td>{{ d.synced_count }}/{{ d.chunk_count }}</td>
+    <td><form method="post" action="/knowledge/{{ d.id }}/delete" onsubmit="return confirm('Delete {{ d.filename }}?')"><button class="danger">Delete</button></form></td>
+  </tr>{% endfor %}</table>
+  {% else %}<p class="muted">No documents yet.</p>{% endif %}
+  <p class="small"><a href="/knowledge-search">Test retrieval →</a></p>
+</div>
+{% endblock %}

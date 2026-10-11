@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block title %}Test retrieval{% endblock %}
+{% block content %}
+<h1>Test retrieval</h1>
+<div class="card">
+  <p class="small muted">Shows what the agent's search tool returns. {% if kb.mode == 'full_context' %}This contractor is in full-context mode, so on calls the agent reads every document and doesn't search.{% endif %}</p>
+  <form class="row"><input name="q" value="{{ q }}" placeholder="e.g. how much for gutter replacement?"><button>Search</button></form>
+</div>
+{% if found %}<div class="card"><h2>Results <span class="pill">{{ found.backend }}</span></h2>
+{% if found.fallback_reason %}<p class="error small">Pinecone failed: {{ found.fallback_reason }}</p>{% endif %}
+{% for r in found.results %}<div style="margin-bottom:12px"><div class="small muted">{{ r.source }} · score {{ r.score }}</div><pre>{{ r.text }}</pre></div>{% else %}<p class="muted">No matches.</p>{% endfor %}
+</div>{% endif %}
+{% endblock %}

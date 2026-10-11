@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+<div class="grid" style="margin-bottom:18px">
+  <div class="card"><div class="muted small">Calls answered</div><div class="stat">{{ stats.calls or 0 }}</div></div>
+  <div class="card"><div class="muted small">Site visits booked</div><div class="stat">{{ stats.visits or 0 }}</div></div>
+  <div class="card"><div class="muted small">Estimates sent</div><div class="stat">{{ stats.proposals or 0 }}</div></div>
+  <div class="card"><div class="muted small">Escalated to you</div><div class="stat">{{ stats.escalations or 0 }}</div></div>
+</div>
+<div class="card"><h2>Knowledge base</h2>{% include "_kb_status.html" %}</div>
+<div class="card"><h2>Upcoming site visits</h2>
+  {% if events %}<table><tr><th>When</th><th>Visit</th><th>Location</th><th>Calendar</th></tr>
+  {% for e in events %}<tr><td>{{ e.start[:16].replace('T',' ') }}</td><td>{{ e.title }}</td><td>{{ e.location }}</td><td><span class="pill">{{ e.provider }}</span></td></tr>{% endfor %}</table>
+  {% else %}<p class="muted">No visits booked yet. Try a <a href="/simulator">test call</a>.</p>{% endif %}
+</div>
+<div class="card"><h2>Recent calls</h2>{% set calls = calls %}{% include "_calls_table.html" %}</div>
+{% endblock %}

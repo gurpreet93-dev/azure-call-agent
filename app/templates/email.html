@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% block title %}{{ email.subject }}{% endblock %}
+{% block content %}
+<h1>{{ email.subject }}</h1>
+<p class="small muted">To {{ email.to_addr }} · {{ email.created_at }} · {{ email.provider }} · <a href="/outbox">← back</a></p>
+<div class="card"><iframe sandbox srcdoc="{{ email.body_html }}" style="width:100%;height:520px;border:0"></iframe></div>
+{% if email.ics %}<div class="card"><h2>Calendar invite (.ics)</h2><pre>{{ email.ics }}</pre></div>{% endif %}
+{% endblock %}

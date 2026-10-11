@@ -1,0 +1,16 @@
+{
+  "_help": "Edit freely. method: fixed | sentence | recursive | headings. max_chars: target size. overlap: characters repeated from the previous chunk. context: none | path | llm (llm = one Claude call per chunk; set enabled true to include). Run: python -m scripts.chunking_experiment",
+  "top_k": 3,
+  "strategies": [
+    {"name": "fixed-500 (baseline)",        "method": "fixed",     "max_chars": 500,  "overlap": 0,   "context": "none"},
+    {"name": "fixed-500 + overlap-100",     "method": "fixed",     "max_chars": 500,  "overlap": 100, "context": "none"},
+    {"name": "sentence-600",                "method": "sentence",  "max_chars": 600,  "overlap": 0,   "context": "none"},
+    {"name": "sentence-600 + overlap-150",  "method": "sentence",  "max_chars": 600,  "overlap": 150, "context": "none"},
+    {"name": "recursive-600",               "method": "recursive", "max_chars": 600,  "overlap": 0,   "context": "none"},
+    {"name": "headings-300 + path",         "method": "headings",  "max_chars": 300,  "overlap": 0,   "context": "path"},
+    {"name": "headings-800 (no label)",     "method": "headings",  "max_chars": 800,  "overlap": 0,   "context": "none"},
+    {"name": "headings-800 + path",         "method": "headings",  "max_chars": 800,  "overlap": 0,   "context": "path"},
+    {"name": "headings-1500 + path",        "method": "headings",  "max_chars": 1500, "overlap": 0,   "context": "path"},
+    {"name": "headings-800 + llm context",  "method": "headings",  "max_chars": 800,  "overlap": 0,   "context": "llm", "enabled": false}
+  ]
+}

@@ -1,0 +1,33 @@
+{% extends "base.html" %}{% block title %}Settings{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+{% if saved %}<div class="flash">Saved.</div>{% endif %}
+<form method="post" action="/settings">
+<div class="card"><h2>Business</h2>
+  <div class="grid">
+    <div><label>Business name</label><input name="business_name" value="{{ me.business_name }}"></div>
+    <div><label>Owner name</label><input name="owner_name" value="{{ me.owner_name }}"></div>
+    <div><label>Trade</label><input name="trade" value="{{ me.trade }}"></div>
+    <div><label>Timezone</label><input name="timezone" value="{{ me.timezone }}"></div>
+  </div>
+</div>
+<div class="card"><h2>Phone &amp; notifications</h2>
+  <div class="grid">
+    <div><label>Inbound number (Twilio, E.164)</label><input name="phone_number" value="{{ me.phone_number or '' }}" placeholder="+14165550100"></div>
+    <div><label>Email for invites &amp; alerts</label><input name="notify_email" value="{{ me.notify_email }}"></div>
+    <div><label>Mobile for urgent alerts</label><input name="notify_phone" value="{{ me.notify_phone or '' }}"></div>
+    <div><label>Outlook mailbox (Graph)</label><input name="calendar_mailbox" value="{{ me.calendar_mailbox or '' }}" placeholder="blank = built-in demo calendar"></div>
+  </div>
+</div>
+<div class="card"><h2>Site visits</h2>
+  <label>Visit length (minutes)</label><input name="visit_duration_min" type="number" min="15" step="15" value="{{ me.visit_duration_min }}" style="max-width:140px">
+  <table style="margin-top:12px"><tr><th>Day</th><th>Opens</th><th>Closes</th><th>Closed</th></tr>
+  {% for d in days %}{% set h = me.business_hours.get(d) %}<tr><td>{{ d|capitalize }}</td>
+    <td><input type="time" name="{{ d }}_open" value="{{ h[0] if h else '' }}"></td>
+    <td><input type="time" name="{{ d }}_close" value="{{ h[1] if h else '' }}"></td>
+    <td><input type="checkbox" name="{{ d }}_closed" {% if not h %}checked{% endif %} style="width:auto"></td></tr>{% endfor %}
+  </table>
+</div>
+<button>Save settings</button>
+</form>
+{% endblock %}
