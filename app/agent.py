@@ -39,6 +39,20 @@ def make_client() -> anthropic.Anthropic | anthropic.AnthropicFoundry:
     raise ValueError(f"LLM_PROVIDER must be 'foundry' or 'anthropic', not {settings.llm_provider!r}")
 
 
+def model_options() -> dict:
+    """Thinking/effort parameters for every request, from AGENT_THINKING / AGENT_EFFORT."""
+    opts: dict = {}
+    if settings.agent_thinking == "off":
+        opts["thinking"] = {"type": "disabled"}
+    elif settings.agent_thinking == "adaptive":
+        opts["thinking"] = {"type": "adaptive"}
+    elif settings.agent_thinking != "model-default":
+        raise ValueError(f"AGENT_THINKING must be off, adaptive or model-default, not {settings.agent_thinking!r}")
+    if settings.agent_effort:
+        opts["output_config"] = {"effort": settings.agent_effort}
+    return opts
+
+
 def client() -> anthropic.Anthropic | anthropic.AnthropicFoundry:
     global _client
     if _client is None:
@@ -177,6 +191,7 @@ def handle_turn(external_id: str, utterance: str) -> dict:
                 tools=tools_for(mode),
                 messages=messages,
                 cache_control={"type": "ephemeral"},  # caches tools + system + history prefix
+                **model_options(),
             )
             log.info("usage call=%s %s", external_id, response.usage)
             messages.append({"role": "assistant", "content": [b.to_dict() for b in response.content]})

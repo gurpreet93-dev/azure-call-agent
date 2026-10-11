@@ -57,7 +57,7 @@ def main() -> None:
     step(2, "Sending one message to your Claude deployment")
     try:
         resp = agent.client().messages.create(
-            model=settings.agent_model, max_tokens=50,
+            model=settings.agent_model, max_tokens=1024, **agent.model_options(),
             messages=[{"role": "user", "content": "Reply with exactly: Foundry connection OK"}])
     except anthropic.APIError as exc:
         fail(exc)
@@ -66,7 +66,7 @@ def main() -> None:
     step(3, "Checking tool use (how the agent takes actions)")
     try:
         resp = agent.client().messages.create(
-            model=settings.agent_model, max_tokens=200, tools=[TOOL],
+            model=settings.agent_model, max_tokens=1024, tools=[TOOL], **agent.model_options(),
             messages=[{"role": "user", "content": "Use the tool: what inspection slots are open on Monday?"}])
     except anthropic.APIError as exc:
         fail(exc)

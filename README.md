@@ -66,7 +66,7 @@ search (BM25), and bookings/emails go to the built-in calendar and outbox (see *
 ## Connect Microsoft Foundry
 
 1. In the Foundry portal (ai.azure.com), create a project, then **Models + endpoints → Deploy model**
-   and deploy a Claude model (e.g. Claude Haiku 4.5). Note the **deployment name**.
+   and deploy a Claude model (Claude Haiku 5.5, base model, Global Standard). Note the **deployment name**.
 2. On the project's **Overview** page, copy the API key and the endpoint
    `https://<resource>.services.ai.azure.com`.
 3. In `.env`: `FOUNDRY_RESOURCE=<resource>` (the name only), `FOUNDRY_API_KEY=<key>`,

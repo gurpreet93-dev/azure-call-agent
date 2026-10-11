@@ -14,7 +14,11 @@ class Settings:
     foundry_resource: str = os.getenv("FOUNDRY_RESOURCE", "")   # <name> in https://<name>.services.ai.azure.com
     foundry_api_key: str = os.getenv("FOUNDRY_API_KEY", "")
     # With Foundry this is the deployment name you chose in the portal (defaults to the model name)
-    agent_model: str = os.getenv("AGENT_MODEL", "claude-haiku-4-5")
+    agent_model: str = os.getenv("AGENT_MODEL", "claude-haiku-5-5")
+    # Claude Haiku 5.5+ thinks before every reply by default, which callers hear as a pause.
+    # off = no thinking (fastest), adaptive = model decides, model-default = send nothing (Haiku 4.5)
+    agent_thinking: str = os.getenv("AGENT_THINKING", "off").strip().lower()
+    agent_effort: str = os.getenv("AGENT_EFFORT", "low").strip().lower()  # blank for Haiku 4.5
     pinecone_api_key: str = os.getenv("PINECONE_API_KEY", "")
     pinecone_index: str = os.getenv("PINECONE_INDEX", "call-agent-kb")
     pinecone_cloud: str = os.getenv("PINECONE_CLOUD", "aws")

@@ -5,7 +5,7 @@ forbidden ones, and only use prices that exist in the knowledge base?
     python -m scripts.run_scenarios                # all scenarios, demo contractor
     python -m scripts.run_scenarios gutter-quote   # one scenario
 
-Writes evals/results-<timestamp>.md. Costs a few cents per scenario on Haiku 4.5.
+Writes evals/results-<timestamp>.md. Costs well under a cent per scenario on Haiku 5.5.
 Note: bookings and emails go to the local DB (mock providers) unless Graph is configured.
 """
 import json
@@ -31,7 +31,7 @@ When your needs are handled or the agent says goodbye, reply with exactly: [HANG
 def caller_reply(persona: str, transcript: list[dict]) -> str:
     # From the caller-model's point of view the agent is the "user".
     msgs = [{"role": "user" if t["who"] == "agent" else "assistant", "content": t["text"]} for t in transcript]
-    resp = agent.client().messages.create(model=settings.agent_model, max_tokens=200,
+    resp = agent.client().messages.create(model=settings.agent_model, max_tokens=1024, **agent.model_options(),
                                           system=CALLER_SYSTEM.format(persona=persona), messages=msgs)
     return "".join(b.text for b in resp.content if b.type == "text").strip()
 

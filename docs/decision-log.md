@@ -83,6 +83,11 @@ Managed speech costs roughly a cent or two per minute [Guessing]. That's a small
 
 **When to revisit:** if the scenario evaluation shows the wrong action being chosen on complex calls, try Sonnet 5.5 on those turns only.
 
+**Update (on Microsoft Foundry): Claude Haiku 5.5 with thinking off.**
+- **Cost.** [Certain, Anthropic model table cached 2026-10-06] Haiku 5.5 is $0.10 / $0.50 per million tokens for prompts up to 100K tokens, a tenth of Haiku 4.5. Foundry bills Claude at the same rates.
+- **Why not the cheapest GPT model?** The saving is fractions of a cent per call, and the app is written against Claude's Messages API. Switching would mean rewriting the agent loop for no visible gain.
+- **Latency.** Haiku 5.5 thinks before every reply by default, which a caller hears as dead air. `AGENT_THINKING=off` with `AGENT_EFFORT=low` turns that off. If the scenario eval shows wrong actions, try `AGENT_THINKING=adaptive` first, before moving up a model size.
+
 ---
 
 ## D4. Chunking strategy

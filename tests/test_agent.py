@@ -49,7 +49,8 @@ def test_emergency_call_escalates_then_ends(contractor, monkeypatch):
     assert alert and alert["subject"].startswith("[URGENT]")
 
     first = fake.requests[0]
-    assert first["model"] == "claude-haiku-4-5"
+    assert first["model"] == agent.settings.agent_model
+    assert {k: first[k] for k in agent.model_options()} == agent.model_options()  # thinking/effort sent
     assert first["cache_control"] == {"type": "ephemeral"}
     assert "Caller ID: +15555550123" in first["messages"][0]["content"]
     # full-context mode: KB lives in the system prompt, search tool is not offered
@@ -107,3 +108,20 @@ def test_client_targets_foundry_or_anthropic_by_setting(monkeypatch):
     import pytest
     with pytest.raises(ValueError):
         agent.make_client()
+
+
+def test_model_options_follow_settings(monkeypatch):
+    import dataclasses
+
+    import pytest
+
+    def opts(**kw):
+        monkeypatch.setattr(agent, "settings", dataclasses.replace(agent.settings, **kw))
+        return agent.model_options()
+
+    assert opts(agent_thinking="off", agent_effort="low") == {
+        "thinking": {"type": "disabled"}, "output_config": {"effort": "low"}}
+    assert opts(agent_thinking="adaptive", agent_effort="medium")["thinking"] == {"type": "adaptive"}
+    assert opts(agent_thinking="model-default", agent_effort="") == {}  # Haiku 4.5: send nothing
+    with pytest.raises(ValueError):
+        opts(agent_thinking="maybe")

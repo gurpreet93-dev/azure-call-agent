@@ -158,12 +158,13 @@ def _raw_chunks(text: str, cfg: ChunkConfig) -> list[tuple[str, str]]:
 
 def _llm_context(document: str, chunk: str) -> str:
     """Contextual retrieval: ask Claude for one sentence situating the chunk in its document."""
-    from app.agent import client
+    from app.agent import client, model_options
     from app.config import settings
 
     resp = client().messages.create(
         model=settings.agent_model,
-        max_tokens=120,
+        max_tokens=1024,  # leaves room if thinking is on; the answer itself is one sentence
+        **model_options(),
         system=[{"type": "text", "text": f"<document>\n{document}\n</document>",
                  "cache_control": {"type": "ephemeral"}}],  # same document for every chunk
         messages=[{"role": "user", "content":
