@@ -8,48 +8,17 @@ load_dotenv()  # reads .env from the working directory; real environment variabl
 
 @dataclass(frozen=True)
 class Settings:
-    # azure-openai = GPT deployed in Microsoft Foundry (Azure OpenAI)
-    # foundry      = Claude deployed in Microsoft Foundry
-    # anthropic    = Anthropic API directly
-    llm_provider: str = os.getenv("LLM_PROVIDER", "azure-openai").strip().lower()
-    anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
-    foundry_resource: str = os.getenv("FOUNDRY_RESOURCE", "")   # <name> in https://<name>.services.ai.azure.com
-    foundry_api_key: str = os.getenv("FOUNDRY_API_KEY", "")
-    # Optional: the "Azure OpenAI endpoint" copied from the Foundry Home page. Blank = built
-    # from FOUNDRY_RESOURCE as https://<name>.openai.azure.com/openai/v1/
-    azure_openai_endpoint: str = os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
-    # With Foundry this is the deployment name you chose in the portal (defaults to the model name)
-    agent_model: str = os.getenv("AGENT_MODEL", "gpt-4o")
-    # Claude Haiku 5.5+ thinks before every reply by default, which callers hear as a pause.
-    # off = no thinking (fastest), adaptive = model decides, model-default = send nothing (Haiku 4.5)
-    agent_thinking: str = os.getenv("AGENT_THINKING", "off").strip().lower()
-    agent_effort: str = os.getenv("AGENT_EFFORT", "low").strip().lower()  # blank for Haiku 4.5
-    pinecone_api_key: str = os.getenv("PINECONE_API_KEY", "")
-    pinecone_index: str = os.getenv("PINECONE_INDEX", "call-agent-kb")
-    pinecone_cloud: str = os.getenv("PINECONE_CLOUD", "aws")
-    pinecone_region: str = os.getenv("PINECONE_REGION", "us-east-1")
-    # Knowledge bases at or below this size go straight into the prompt (cached);
-    # above it the contractor is switched to Pinecone retrieval automatically.
-    kb_full_context_max_tokens: int = int(os.getenv("KB_FULL_CONTEXT_MAX_TOKENS", "30000"))
-    session_secret: str = os.getenv("SESSION_SECRET", "dev-only-secret-change-me")
-    public_base_url: str = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
-    twilio_auth_token: str = os.getenv("TWILIO_AUTH_TOKEN", "")
-    ms_tenant_id: str = os.getenv("MS_TENANT_ID", "")
-    ms_client_id: str = os.getenv("MS_CLIENT_ID", "")
-    ms_client_secret: str = os.getenv("MS_CLIENT_SECRET", "")
-    database_path: str = os.getenv("DATABASE_PATH", "data/app.db")
+    # The agent (instructions + knowledge) lives in Microsoft Foundry; the app only references it.
+    # Project endpoint: Foundry portal -> your project -> Home -> "Project endpoint".
+    foundry_project_endpoint: str = os.getenv("FOUNDRY_PROJECT_ENDPOINT", "").strip().rstrip("/")
+    foundry_agent_name: str = os.getenv("FOUNDRY_AGENT_NAME", "").strip()
 
-    @property
-    def llm_configured(self) -> bool:
-        if self.llm_provider == "azure-openai":
-            return bool((self.foundry_resource or self.azure_openai_endpoint) and self.foundry_api_key)
-        if self.llm_provider == "foundry":
-            return bool(self.foundry_resource and self.foundry_api_key)
-        return bool(self.anthropic_api_key)
-
-    @property
-    def graph_enabled(self) -> bool:
-        return bool(self.ms_tenant_id and self.ms_client_id and self.ms_client_secret)
+    # Azure Speech (part of the same Foundry resource) speaks the agent's replies.
+    # The Foundry resource's API key works here; SPEECH_KEY falls back to FOUNDRY_API_KEY.
+    speech_key: str = (os.getenv("SPEECH_KEY") or os.getenv("FOUNDRY_API_KEY") or "").strip()
+    speech_region: str = os.getenv("SPEECH_REGION", "eastus2").strip()
+    # Multilingual neural voices speak any supported language with one voice.
+    speech_voice: str = os.getenv("SPEECH_VOICE", "en-US-AvaMultilingualNeural").strip()
 
 
 settings = Settings()

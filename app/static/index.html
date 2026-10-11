@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Foundry Voice Agent</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1c2430; --muted:#5f6b7a; --line:#e3e7ec; --accent:#5b3fd6; --agent:#eef0ff; --you:#e9f7ef; --err:#b42318; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12151a; --card:#1b2028; --text:#e7ebf0; --muted:#9aa5b1; --line:#2c333d; --accent:#9d8bff; --agent:#252a3d; --you:#1f3127; --err:#ff8a80; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 40px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  label { font-size: 14px; color: var(--muted); }
+  select, input[type=text] { font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  input[type=text] { flex: 1; min-width: 0; }
+  button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  #mic { width: 72px; height: 72px; border-radius: 50%; font-size: 28px; background: var(--accent); color:#fff; border:none; }
+  #mic.listening { animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(91,63,214,.5)} 70%{box-shadow:0 0 0 18px rgba(91,63,214,0)} 100%{box-shadow:0 0 0 0 rgba(91,63,214,0)} }
+  #log { margin: 16px 0; display:flex; flex-direction:column; gap:10px; min-height: 160px; }
+  .msg { padding: 10px 12px; border-radius: 10px; max-width: 85%; white-space: pre-wrap; }
+  .you { background: var(--you); align-self: flex-end; }
+  .agent { background: var(--agent); align-self: flex-start; }
+  .sys { color: var(--muted); font-size: 13px; align-self: center; text-align:center; }
+  .sys.err { color: var(--err); }
+  .meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  #status { font-size: 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Foundry Voice Agent</h1>
+  <p class="sub">Speak to the agent. Its instructions and knowledge live in Microsoft Foundry; replies are spoken by Azure Speech.</p>
+
+  <div class="card">
+    <div class="row">
+      <label for="lang">Language</label>
+      <select id="lang">
+        <option value="en-US">English (US)</option>
+        <option value="en-IN">English (India)</option>
+        <option value="hi-IN">हिन्दी (Hindi)</option>
+        <option value="pa-IN">ਪੰਜਾਬੀ (Punjabi)</option>
+        <option value="es-ES">Español</option>
+        <option value="fr-FR">Français</option>
+        <option value="de-DE">Deutsch</option>
+        <option value="ar-SA">العربية (Arabic)</option>
+        <option value="zh-CN">中文 (Mandarin)</option>
+      </select>
+      <label><input type="checkbox" id="handsfree" checked> Keep listening after each reply</label>
+      <button id="reset">New conversation</button>
+    </div>
+
+    <div id="log"></div>
+
+    <div class="row" style="justify-content:center; flex-direction:column; gap:6px">
+      <button id="mic" title="Tap and speak">🎤</button>
+      <div id="status">Tap the microphone and speak</div>
+    </div>
+
+    <form id="typeform" class="row" style="margin-top:16px">
+      <input type="text" id="typed" placeholder="…or type a message" autocomplete="off">
+      <button class="primary" type="submit">Send</button>
+    </form>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let conversationId = null, rec = null, listening = false, busy = false;
+const player = new Audio();
+
+function log(cls, text, meta) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls; d.textContent = text;
+  if (meta) { const m = document.createElement('div'); m.className = 'meta'; m.textContent = meta; d.appendChild(m); }
+  $('log').appendChild(d); d.scrollIntoView({behavior: 'smooth', block: 'end'});
+  return d;
+}
+function status(t) { $('status').textContent = t; }
+
+async function api(path, body) {
+  const r = await fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})});
+  if (!r.ok) { let msg = r.statusText; try { msg = (await r.json()).detail || msg; } catch {} throw new Error(msg); }
+  return r;
+}
+
+async function ensureConversation() {
+  if (conversationId) return conversationId;
+  const r = await api('/api/conversation');
+  conversationId = (await r.json()).conversation_id;
+  return conversationId;
+}
+
+// Reply voice: Azure Speech first; if it fails, the browser's own voice for the same language.
+async function speak(text) {
+  const lang = $('lang').value;
+  try {
+    const r = await api('/api/speak', {text, lang});
+    const url = URL.createObjectURL(await r.blob());
+    player.src = url;
+    await new Promise((resolve, reject) => { player.onended = resolve; player.onerror = reject; player.play().catch(reject); });
+    URL.revokeObjectURL(url);
+    return 'Azure Speech';
+  } catch (e) {
+    if (!window.speechSynthesis) return 'not spoken (' + e.message + ')';
+    await new Promise((resolve) => {
+      const u = new SpeechSynthesisUtterance(text); u.lang = lang; u.onend = resolve; u.onerror = resolve;
+      setTimeout(resolve, 3000 + text.length * 90);  // some browsers never fire onend
+      speechSynthesis.cancel(); speechSynthesis.speak(u);
+    });
+    return 'browser voice (Azure Speech failed: ' + e.message + ')';
+  }
+}
+
+async function send(text) {
+  text = text.trim();
+  if (!text || busy) return;
+  busy = true; $('mic').disabled = true;
+  log('you', text);
+  try {
+    status('Thinking…');
+    const id = await ensureConversation();
+    const r = await api('/api/chat', {conversation_id: id, text});
+    const reply = (await r.json()).reply || '(no reply)';
+    status('Speaking…');
+    const bubble = log('agent', reply);
+    const via = await speak(reply);
+    const m = document.createElement('div'); m.className = 'meta'; m.textContent = 'voice: ' + via;
+    bubble.appendChild(m);
+  } catch (e) {
+    log('sys err', e.message);
+  } finally {
+    busy = false; $('mic').disabled = false; status('Tap the microphone and speak');
+    if ($('handsfree').checked && SR && !stoppedByUser) startListening();
+  }
+}
+
+let stoppedByUser = true;  // no voice session running (not started yet, typed, or tapped to stop)
+
+function startListening() {
+  if (!SR || listening || busy) return;
+  rec = new SR(); rec.lang = $('lang').value; rec.interimResults = false; rec.continuous = false;
+  rec.onresult = (ev) => { const t = ev.results[0][0].transcript; stopListening(); send(t); };
+  rec.onerror = (ev) => { stopListening(); if (ev.error !== 'no-speech' && ev.error !== 'aborted') log('sys err', 'Microphone: ' + ev.error); else status('Didn’t catch that. Tap the microphone and speak'); };
+  rec.onend = () => { if (listening) stopListening(); };
+  listening = true; $('mic').classList.add('listening'); status('Listening (' + $('lang').selectedOptions[0].text + ')…');
+  rec.start();
+}
+function stopListening() { listening = false; $('mic').classList.remove('listening'); try { rec && rec.stop(); } catch {} }
+
+$('mic').onclick = () => {
+  if (!SR) { log('sys err', 'This browser has no speech recognition. Use Chrome or Edge, or type below.'); return; }
+  if (listening) { stoppedByUser = true; stopListening(); status('Stopped. Tap the microphone and speak'); return; }
+  player.pause(); window.speechSynthesis && speechSynthesis.cancel();
+  stoppedByUser = false; startListening();
+};
+$('typeform').onsubmit = (ev) => { ev.preventDefault(); const t = $('typed').value; $('typed').value = ''; stoppedByUser = true; send(t); };
+$('reset').onclick = () => { conversationId = null; stoppedByUser = true; stopListening(); player.pause(); $('log').innerHTML = ''; log('sys', 'New conversation. The agent has forgotten the previous one.'); };
+$('lang').onchange = () => log('sys', 'Language: ' + $('lang').selectedOptions[0].text + '. Speak in this language; the agent will reply in it.');
+
+if (!SR) log('sys', 'Speech recognition needs Chrome or Edge. You can still type.');
+</script>
+</body>
+</html>

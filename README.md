@@ -1,188 +1,90 @@
-# Azure Call Agent
+# Foundry Voice Agent
 
-An AI phone receptionist, with its model (GPT-4o, or Claude) running in **Microsoft Foundry** on Azure, for trade contractors (roofers, fabricators, applicators). A contractor
-uploads their own documents; callers phone in; the agent answers questions from those documents and
-**decides** what to do: book a site visit (Outlook invite to caller + contractor), email a preliminary
-estimate, or escalate an emergency to the contractor.
+Talk to an AI agent in your own language. The browser turns your speech into text, an agent in
+**Microsoft Foundry** decides what to say, and **Azure Speech** speaks the reply.
 
-## Built on Azure
-
-| Job | Azure service | Status |
-|---|---|---|
-| The agent's model | **Microsoft Foundry**: GPT-4o via Azure OpenAI (default), or Claude | ✅ `LLM_PROVIDER=azure-openai` / `foundry` |
-| Outlook calendar invites + email | **Microsoft Graph** (Entra ID app registration) | ✅ optional; mock calendar/outbox without it |
-| Knowledge-base search | Azure AI Search | planned (Pinecone today) |
-| Phone line | Azure Communication Services | planned (Twilio today) |
-| Hosting | Azure Container Apps | planned (runs locally today) |
-
-The agent decides for itself which action fits the call; there is no fixed script. The agent loop
-is written once; `LLM_PROVIDER` picks GPT on Azure OpenAI (`azure-openai`, translated by
-`app/llm_openai.py`), Claude on Foundry (`foundry`), or Claude on the Anthropic API (`anthropic`).
-
-Product decisions and trade-offs: [`docs/decision-log.md`](docs/decision-log.md).
-Step-by-step setup of Claude, Pinecone, ngrok, Twilio and Outlook: [`docs/integration-guide.md`](docs/integration-guide.md).
+The agent's instructions, knowledge base and model are configured **in Foundry only**. This app
+holds no prompt and no documents; it references the agent by name.
 
 ```
-Caller ─► Twilio number ─► /voice/* webhooks ──────┐
-Browser "test call" (mic + speaker) ─► /api/sim/* ─┤
-                                                   ▼
-                  Agent loop: GPT-4o / Claude on Microsoft Foundry + tools (app/agent.py)
-   ┌─────────────┬────────────────────┬───────────────┬────────────────────┬──────────┐
- knowledge     check_availability    send_proposal   escalate_to_         end_call
- (full prompt  book_site_visit       (KB prices      contractor
-  or Pinecone) (Outlook / mock)       only)          (email alert)
+mic ─► browser speech recognition (language you pick) ─► text
+     ─► this app ─► Foundry agent: instructions + knowledge files + model (all in Foundry)
+     ─► reply text ─► Azure Speech, multilingual neural voice ─► audio in the browser
 ```
 
-## What it does
-
-| Capability | Where |
+| Part | Where it lives |
 |---|---|
-| Contractor signup/login, settings (hours, visit length, notify email, Outlook mailbox) | `app/main.py`, `app/accounts.py` |
-| Upload **Word / Excel / PDF / text** knowledge docs; view chunks; test retrieval | `app/knowledge.py` |
-| **Automatic KB routing**: small KB → whole KB in the prompt (cached); KB over the threshold → chunks synced to **Pinecone** (one namespace per contractor) and the agent gets a search tool | `app/knowledge.py`, `app/vectorstore.py` |
-| Agent that chooses between answering, booking, quoting, escalating | `app/agent.py`, `app/tools.py` |
-| Outlook calendar + email via Microsoft Graph, or a built-in mock calendar/outbox | `app/integrations/` |
-| Browser voice test call (Chrome speech recognition + speech synthesis) with live view of the agent's decisions | `app/templates/simulator.html` |
-| Real phone calls via Twilio (speech in, speech out) | `app/voice.py` |
-| Call log: transcript, every decision with inputs/results, emails and invites | `/calls` |
-| Scenario eval: simulated callers × 10 scenarios, scored on actions + price grounding | `scripts/run_scenarios.py`, `evals/` |
+| Speech → text | Browser (Chrome / Edge Web Speech API) |
+| Instructions, knowledge, model, conversation history | Microsoft Foundry (Foundry Agent Service) |
+| Text → speech | Azure Speech, same Foundry resource |
+| The screen | `app/static/index.html` + `app/main.py` (FastAPI) |
 
-## Run it in the browser (GitHub Codespaces, nothing to install)
+The earlier full app (bookings, proposals, escalation, Twilio, Pinecone, evals) is on the
+[`full-app`](../../tree/full-app) branch.
 
-1. GitHub → **Settings → Codespaces → Secrets → New secret**: name `FOUNDRY_API_KEY`, value = your
-   Foundry key, repository access = this repo. (Real environment variables override `.env`.)
-2. On this repo: **Code → Codespaces → Create codespace on main**. Dependencies install automatically.
-3. In the codespace terminal: edit `.env` (`FOUNDRY_RESOURCE`, `AGENT_MODEL`), then
-   `python -m scripts.check_foundry`, `python -m app.seed`, `uvicorn app.main:app`.
-4. Open the forwarded port 8000 when prompted (or the **Ports** tab).
+## 1. Set up the agent in Foundry (portal, ~10 minutes)
 
-## Run it locally (10 minutes)
+1. **Build → Agents → Create agent.** Name: `summit-receptionist`. Model: your `gpt-4o` deployment.
+2. **Instructions** — paste:
+   ```
+   You are the phone receptionist for Summit Roofing, a residential roofing contractor.
+   This is a spoken conversation: reply in one to three short sentences, no lists, no markdown, no emojis.
+   Always reply in the same language the caller is speaking. If they switch language, switch with them.
+   Answer only from the knowledge files. If the answer is not there, say you will have the team follow up.
+   Quote prices only if they appear in the price list, and say they include 13% HST only if the list says so.
+   If water is actively coming in or there is a safety risk, treat it as an emergency: say you are alerting
+   the team and ask for their name, phone number and address. Never promise an arrival time.
+   Collect the caller's name, phone number and address before ending, and confirm them back.
+   ```
+3. **Knowledge → Add → Files**: upload the three files in [`sample_kb/`](sample_kb) (company info,
+   customer handbook, price list). Wait until indexing finishes.
+4. **Save**, then try it in the agent playground.
 
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env            # add FOUNDRY_RESOURCE + FOUNDRY_API_KEY + AGENT_MODEL (see below)
-python -m scripts.check_foundry # proves the Foundry connection and tool use work
-python -m app.seed              # demo contractor: demo@summit.test / demo1234 + sample KB
-uvicorn app.main:app --reload
-```
+## 2. Give yourself permission to call it
 
-Open http://localhost:8000, log in, go to **Test call**, press **Start call** and talk (Chrome/Edge).
-Watch the right-hand panel: every tool the agent decides to use appears live.
+Subscription Owner manages resources but may not include *using* the agent.
+Azure portal → your Foundry resource (`voice-agent-gurpreet`) → **Access control (IAM)** → **Add role
+assignment** → **Azure AI User** → select your account → **Review + assign**. Allow ~5 minutes.
 
-Without Pinecone or Microsoft keys everything still works: retrieval falls back to local keyword
-search (BM25), and bookings/emails go to the built-in calendar and outbox (see **Emails & invites**).
+## 3. Run it (GitHub Codespaces, nothing to install)
 
-## Connect Microsoft Foundry
+1. GitHub → **Settings → Codespaces → Secrets**: `FOUNDRY_API_KEY` = the key from the Foundry Home page
+   (used for Azure Speech).
+2. This repo → **Code → Codespaces → Create codespace on main** (or **Rebuild Container** on an existing one,
+   so the Azure CLI is installed).
+3. In the codespace terminal:
+   ```
+   az login --use-device-code
+   python -m scripts.check_agent
+   uvicorn app.main:app
+   ```
+4. Open port 8000, pick a language, tap the microphone and speak.
 
-1. In the Foundry portal (ai.azure.com), create a project, then deploy **gpt-4o** with
-   **Deploy → Custom settings → Standard** (new accounts often have Standard quota but none for
-   Global Standard; check Manage → Quota). Note the **deployment name**. For Claude, deploy
-   Claude Haiku 5.5 instead and set `LLM_PROVIDER=foundry`.
-2. On the project's **Overview** page, copy the API key and the endpoint
-   `https://<resource>.services.ai.azure.com`.
-3. In `.env`: `LLM_PROVIDER=azure-openai`, `FOUNDRY_RESOURCE=<resource>` (the name only),
-   `FOUNDRY_API_KEY=<key>`, `AGENT_MODEL=<deployment name>`.
-4. Run `python -m scripts.check_foundry`. It sends one message and one tool call, and explains
-   any failure (wrong key, wrong deployment name, missing role, quota).
+`scripts/check_agent.py` checks each link in turn (settings, Entra sign-in, the agent, Azure Speech) and says
+what to fix when one fails.
 
-GPT goes through the OpenAI SDK against the resource's Azure OpenAI v1 endpoint; Claude goes through
-the Anthropic SDK's `AnthropicFoundry` client. Both use the same key.
+## Settings (`.env`)
 
-## Turn on Pinecone
+| Setting | What it is |
+|---|---|
+| `FOUNDRY_PROJECT_ENDPOINT` | Foundry Home page → **Project endpoint** (`…services.ai.azure.com/api/projects/<project>`) |
+| `FOUNDRY_AGENT_NAME` | The agent's name in Foundry |
+| `SPEECH_KEY` | Foundry resource key; blank = use `FOUNDRY_API_KEY` |
+| `SPEECH_REGION` | The resource's region (`eastus2`) |
+| `SPEECH_VOICE` | Azure neural voice; the default multilingual voice speaks every listed language |
 
-1. Free Starter account at https://app.pinecone.io → API key → `PINECONE_API_KEY=...` in `.env`.
-2. Restart. The index `call-agent-kb` is created on first use with integrated embedding
-   (`llama-text-embed-v2`), so Pinecone embeds the text itself.
-3. The switch is automatic: when a contractor's KB exceeds `KB_FULL_CONTEXT_MAX_TOKENS` (default
-   30,000), all chunks are pushed to their namespace and the agent starts searching.
-   **To demo the switch** with the small sample KB, set `KB_FULL_CONTEXT_MAX_TOKENS=1000`, restart,
-   and upload any document: the knowledge page flips to "Retrieval mode · pinecone".
+## Notes
 
-## Turn on real phone calls (Twilio)
-
-1. Twilio account (trial credit is enough) → buy a voice number.
-2. Expose your laptop: `ngrok http 8000` → set `PUBLIC_BASE_URL=https://<id>.ngrok.app`.
-3. In the Twilio number's settings: **A call comes in** → Webhook `POST {PUBLIC_BASE_URL}/voice/incoming`;
-   **Call status changes** → `POST {PUBLIC_BASE_URL}/voice/status`.
-4. Put the number (E.164, e.g. `+14165550100`) in **Settings → Inbound number**. With a single
-   contractor account, every call routes to it anyway.
-5. Set `TWILIO_AUTH_TOKEN` to validate webhook signatures.
-
-Twilio does speech-to-text (`<Gather input="speech">`) and text-to-speech (`<Say>`). Expect a few
-seconds per turn; see decision D1/D7 for the upgrade path.
-
-## Turn on Outlook (Microsoft Graph)
-
-1. Entra ID → App registrations → New. Add **application** permissions `Calendars.ReadWrite` and
-   `Mail.Send`, grant admin consent, create a client secret.
-2. Set `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`.
-3. In **Settings → Outlook mailbox**, enter the contractor's mailbox (e.g. `alex@summitroofing.com`).
-   Bookings now create real Outlook events and Outlook sends the invites to the caller and contractor.
-   Free/busy is read from that calendar.
-
-## Scenario eval
-
-```bash
-python -m scripts.run_scenarios                    # all 10 scenarios
-python -m scripts.run_scenarios emergency-leak     # one
-```
-
-A second Claude instance plays each caller persona (`evals/scenarios.json`). Each call is checked for
-the expected action, no forbidden actions (e.g. no proposal for metal roofs), every quoted price
-existing in the KB, and a clean close. Results go to `evals/results-<timestamp>.md`. A few cents per run.
-
-## Chunking experiment
-
-```bash
-python -m scripts.chunking_experiment                       # local keyword search
-python -m scripts.chunking_experiment --backend pinecone    # semantic search (also: hybrid, --rerank)
-```
-
-Compares the strategies in `evals/chunking_strategies.json` (method, size, overlap, context label) on
-`evals/retrieval_questions.json`, and writes a report with every chunk and what each question retrieved
-to `evals/chunking/<timestamp>/`. Set `CHUNK_METHOD` / `CHUNK_MAX_CHARS` / `CHUNK_OVERLAP` /
-`CHUNK_CONTEXT` in `.env` to the winner. Guide: [`docs/chunking-playbook.md`](docs/chunking-playbook.md).
-Also try strategies live in the app: **Knowledge base → open a document → Chunking preview**.
+- **Languages.** Browser speech recognition needs to be told the language, hence the picker. The agent
+  replies in whatever language it hears; the voice is pinned to the picked language.
+- **If Azure Speech fails**, the browser speaks the reply with its own voice and the reply bubble says so.
+- **Conversation memory** is held by Foundry (one conversation per page session; **New conversation** resets it).
+- **Not yet:** Foundry *voice agents* (realtime audio end to end) need a `gpt-realtime` deployment; this
+  subscription has no quota for it yet.
 
 ## Tests
 
-```bash
+```
 pytest -q
 ```
-
-Covers parsing (Word headings and tables, Excel rows, plain-text headings), chunking, full-context vs
-Pinecone routing (including automatic sync and deletes), tenant isolation, slot finding, booking and
-double-booking, proposal maths and validation, the agent loop (scripted fake model), graceful API
-failure, and the Twilio webhook flow.
-
-## Demo script (3 minutes)
-
-1. **Knowledge base**: show the two uploaded docs (text + Excel), the token meter and mode badge.
-   Open a doc to show chunks with their `[file > section]` headers.
-2. **Test call: emergency**: "Water is coming through my kitchen ceiling." Point at the live decision
-   panel: escalation, then the earliest inspection slot. It does not promise a technician immediately.
-3. **Test call: quote**: "Price for replacing 120 feet of 5 inch gutters?" → estimate emailed with tax,
-   copied to the contractor. Then ask for a metal-roof price → it won't guess and offers an inspection.
-4. **Calls**: open the record: transcript, every decision, the email and the calendar invite.
-5. **Eval results**: "10 scenarios, X/10 passed; here's the one that failed and what I changed."
-
-## Project layout
-
-```
-app/
-  main.py            routes: auth, dashboard, KB, settings, calls, outbox, simulator API
-  agent.py           system prompt + tool-use loop (GPT or Claude)
-  llm_openai.py      GPT adapter: Chat Completions behind the same messages.create interface (append-only history, prompt caching)
-  tools.py           agent tools: validation, slot finding, booking, proposals, escalation
-  knowledge.py       parsing (docx/xlsx/pdf/txt), chunking, size-based routing, BM25 fallback
-  vectorstore.py     Pinecone (namespace per contractor, integrated embedding)
-  voice.py           Twilio webhooks (TwiML)
-  integrations/      Microsoft Graph calendar + email, mock fallbacks
-  templates/         dashboard UI
-sample_kb/           Summit Roofing company info + DEMO price list (fictional prices)
-evals/               caller scenarios + results
-scripts/             eval runner, sample price list generator
-tests/               pytest suite
-docs/decision-log.md product decisions and trade-offs
-```
+Foundry and Azure Speech are replaced with fakes, so the tests run without an Azure account.
