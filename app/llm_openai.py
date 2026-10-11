@@ -119,10 +119,22 @@ class _Messages:
         return from_openai_response(self._client.chat.completions.create(**kwargs))
 
 
+def openai_base_url(resource: str, endpoint: str = "") -> str:
+    """The v1 API base URL. Uses the endpoint copied from the portal when given (with or without
+    the /openai/v1 suffix); otherwise Azure's standard address for the resource name."""
+    if endpoint:
+        url = endpoint.rstrip("/")
+        if not url.endswith("/openai/v1"):
+            url = url.removesuffix("/openai") + "/openai/v1"
+        return url + "/"
+    return f"https://{resource}.openai.azure.com/openai/v1/"
+
+
 class AzureOpenAIClient:
     """Exposes `.messages.create(...)` like the Anthropic SDK clients."""
 
-    def __init__(self, resource: str, api_key: str, max_retries: int = 2, timeout: float = 30):
-        self._client = openai.OpenAI(base_url=f"https://{resource}.openai.azure.com/openai/v1/",
-                                     api_key=api_key, max_retries=max_retries, timeout=timeout)
+    def __init__(self, resource: str, api_key: str, endpoint: str = "", max_retries: int = 2, timeout: float = 30):
+        self.base_url = openai_base_url(resource, endpoint)
+        self._client = openai.OpenAI(base_url=self.base_url, api_key=api_key,
+                                     max_retries=max_retries, timeout=timeout)
         self.messages = _Messages(self._client)

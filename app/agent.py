@@ -36,7 +36,8 @@ _client = None
 def make_client():
     if settings.llm_provider == "azure-openai":
         from app.llm_openai import AzureOpenAIClient
-        return AzureOpenAIClient(settings.foundry_resource, settings.foundry_api_key, max_retries=2, timeout=30)
+        return AzureOpenAIClient(settings.foundry_resource, settings.foundry_api_key,
+                                 endpoint=settings.azure_openai_endpoint, max_retries=2, timeout=30)
     if settings.llm_provider == "foundry":
         return anthropic.AnthropicFoundry(resource=settings.foundry_resource or None,
                                           api_key=settings.foundry_api_key or None, max_retries=2, timeout=30)

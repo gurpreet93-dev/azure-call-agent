@@ -88,3 +88,18 @@ def test_full_call_turn_runs_through_gpt_adapter(contractor, monkeypatch):
     second = sent[1]["messages"]
     assert second[-1]["role"] == "tool" and second[-1]["tool_call_id"] == "call_1"
     assert "cache_control" not in sent[0] and "thinking" not in sent[0]
+
+
+def test_endpoint_from_portal_wins_over_resource_name():
+    from app.llm_openai import openai_base_url
+
+    built = "https://voice-agent-gurpreet.openai.azure.com/openai/v1/"
+    assert openai_base_url("voice-agent-gurpreet") == built
+    for pasted in ("https://voice-agent-gurpreet.openai.azure.com/openai/v1",
+                   "https://voice-agent-gurpreet.openai.azure.com/openai/v1/",
+                   "https://voice-agent-gurpreet.openai.azure.com/openai/",
+                   "https://voice-agent-gurpreet.openai.azure.com"):
+        assert openai_base_url("ignored-name", pasted) == built
+    assert openai_base_url("x", "https://my-proxy.example.com/openai/v1") == "https://my-proxy.example.com/openai/v1/"
+    assert AzureOpenAIClient("x", "k", endpoint="https://custom.example.com").base_url == \
+        "https://custom.example.com/openai/v1/"

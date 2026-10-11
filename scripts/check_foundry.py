@@ -24,8 +24,9 @@ def step(n: int, text: str) -> None:
 
 
 def fail(exc: Exception) -> None:
-    host = (f"{settings.foundry_resource}.openai.azure.com" if settings.llm_provider == "azure-openai"
-            else f"{settings.foundry_resource}.services.ai.azure.com")
+    from app.llm_openai import openai_base_url
+    host = (openai_base_url(settings.foundry_resource, settings.azure_openai_endpoint)
+            if settings.llm_provider == "azure-openai" else f"https://{settings.foundry_resource}.services.ai.azure.com")
     if isinstance(exc, (anthropic.AuthenticationError, openai.AuthenticationError)):
         hint = "The key was rejected. Copy it again from the Foundry portal (project Overview), no spaces."
     elif isinstance(exc, (anthropic.NotFoundError, openai.NotFoundError)):
@@ -36,25 +37,30 @@ def fail(exc: Exception) -> None:
     elif isinstance(exc, (anthropic.RateLimitError, openai.RateLimitError)):
         hint = "Quota or rate limit hit. Wait a minute, or raise the deployment's rate limit in the portal."
     elif isinstance(exc, (anthropic.APIConnectionError, openai.APIConnectionError)):
-        hint = (f"Couldn't reach https://{host}. "
-                "Check FOUNDRY_RESOURCE is just the name (no https://, no .services.ai.azure.com).")
+        hint = (f"Couldn't reach {host}. Check FOUNDRY_RESOURCE is just the name (no https://), "
+                "or paste the exact endpoint from the Foundry Home page into AZURE_OPENAI_ENDPOINT.")
     else:
         hint = "Unexpected error; paste this message to Claude."
     sys.exit(f"  ✗ {type(exc).__name__}: {exc}\n    {hint}")
 
 
 def main() -> None:
+    from app.llm_openai import openai_base_url
     step(1, "Reading Foundry settings from .env")
     if settings.llm_provider not in ("azure-openai", "foundry"):
         sys.exit(f"  ✗ LLM_PROVIDER is '{settings.llm_provider}'. Set LLM_PROVIDER=azure-openai (GPT) "
                  "or foundry (Claude) in .env.")
-    missing = [n for n, v in (("FOUNDRY_RESOURCE", settings.foundry_resource),
+    where = settings.foundry_resource or (settings.llm_provider == "azure-openai" and settings.azure_openai_endpoint)
+    missing = [n for n, v in (("FOUNDRY_RESOURCE", where),
                               ("FOUNDRY_API_KEY", settings.foundry_api_key)) if not v]
     if missing:
         sys.exit(f"  ✗ {', '.join(missing)} empty in .env. Both are on your project's Overview page in the Foundry portal.")
-    if "://" in settings.foundry_resource or "." in settings.foundry_resource:
+    if settings.foundry_resource and ("://" in settings.foundry_resource or "." in settings.foundry_resource):
         sys.exit("  ✗ FOUNDRY_RESOURCE should be only the name, e.g. 'my-resource', "
                  "not the full https://my-resource.services.ai.azure.com URL.")
+    if settings.llm_provider == "azure-openai":
+        print(f"  ✓ endpoint {openai_base_url(settings.foundry_resource, settings.azure_openai_endpoint)}"
+              f" ({'from AZURE_OPENAI_ENDPOINT' if settings.azure_openai_endpoint else 'built from FOUNDRY_RESOURCE'})")
     print(f"  ✓ {settings.llm_provider}: resource '{settings.foundry_resource}', deployment '{settings.agent_model}', "
           f"key starts with {settings.foundry_api_key[:4]}…")
 

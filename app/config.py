@@ -15,6 +15,9 @@ class Settings:
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     foundry_resource: str = os.getenv("FOUNDRY_RESOURCE", "")   # <name> in https://<name>.services.ai.azure.com
     foundry_api_key: str = os.getenv("FOUNDRY_API_KEY", "")
+    # Optional: the "Azure OpenAI endpoint" copied from the Foundry Home page. Blank = built
+    # from FOUNDRY_RESOURCE as https://<name>.openai.azure.com/openai/v1/
+    azure_openai_endpoint: str = os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
     # With Foundry this is the deployment name you chose in the portal (defaults to the model name)
     agent_model: str = os.getenv("AGENT_MODEL", "gpt-4o")
     # Claude Haiku 5.5+ thinks before every reply by default, which callers hear as a pause.
@@ -38,7 +41,9 @@ class Settings:
 
     @property
     def llm_configured(self) -> bool:
-        if self.llm_provider in ("foundry", "azure-openai"):
+        if self.llm_provider == "azure-openai":
+            return bool((self.foundry_resource or self.azure_openai_endpoint) and self.foundry_api_key)
+        if self.llm_provider == "foundry":
             return bool(self.foundry_resource and self.foundry_api_key)
         return bool(self.anthropic_api_key)
 
