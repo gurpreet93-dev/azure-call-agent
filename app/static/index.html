@@ -155,7 +155,7 @@ function speechEndTime(audioStart, offsetTicks, durationTicks, heardAt) {
   if (audioStart == null || !(offsetTicks >= 0) || !(durationTicks >= 0)) return null;
   const end = audioStart + (offsetTicks + durationTicks) / 10000;
   const lag = heardAt - end;
-  return lag >= 0 && lag < 10000 ? end : null;          // impossible values: don't trust this result's clock
+  return lag >= 0 && lag < 5000 ? end : null;           // implausible (clock drifted, e.g. tab in background): skip
 }
 
 // ---------- reply voice: Azure Speech (streamed), browser voice as fallback ----------
@@ -298,9 +298,10 @@ function interrupt() { if (speaking && finishSpeaking) finishSpeaking(true); }
 // recognized = Azure decided the sentence was over. The send then waits MERGE_MS for a follow-on sentence.
 const MERGE_MS = 1200;
 let heardBuffer = [], heardTimer = null, lastPartialAt = null;
-function queueUtterance(t, speechEnd) {
+function queueUtterance(t, speechEnd, lastWords) {
   heardBuffer.push(t);
-  const marks = {lastWords: lastPartialAt, recognized: now(), speechEnd: speechEnd == null ? null : speechEnd};
+  const marks = {lastWords: lastWords == null ? null : lastWords, recognized: now(),
+                 speechEnd: speechEnd == null ? null : speechEnd};
   clearTimeout(heardTimer);
   heardTimer = setTimeout(() => { const all = heardBuffer.join(' '); heardBuffer = []; send(all, marks); }, MERGE_MS);
 }
@@ -333,7 +334,11 @@ async function startSession() {
     if (!t || (speaking && isEcho(t))) return;
     try { setLanguage(SDK.AutoDetectSourceLanguageResult.fromResult(e.result).language, 'detected from your voice'); } catch {}
     if (speaking) interrupt();
-    queueUtterance(t, speechEndTime(audioStart, e.result.offset, e.result.duration, heardAt));
+    // Only a partial result from this sentence counts (an old one, e.g. from before the tab was in the
+    // background, would make the wait look minutes long).
+    const partial = lastPartialAt != null && heardAt - lastPartialAt < 10000 ? lastPartialAt : null;
+    lastPartialAt = null;
+    queueUtterance(t, speechEndTime(audioStart, e.result.offset, e.result.duration, heardAt), partial);
   };
   recognizer.canceled = (_, e) => {
     log('sys err', 'Speech recognition stopped: ' + (e.errorDetails || e.reason));
