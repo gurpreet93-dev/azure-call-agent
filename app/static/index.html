@@ -296,7 +296,8 @@ function interrupt() { if (speaking && finishSpeaking) finishSpeaking(true); }
 // Sentences said within a second of each other ("बताओ बताओ। अरे, गर्मी…") become one turn, not two agent calls.
 // Timing of the caller's side: lastWords = last partial result (≈ when they stopped talking, a little after),
 // recognized = Azure decided the sentence was over. The send then waits MERGE_MS for a follow-on sentence.
-const MERGE_MS = 1200;
+// Azure has already waited for ~0.5 s of silence before "recognized", so a short extra wait is enough.
+const MERGE_MS = 600;
 let heardBuffer = [], heardTimer = null, lastPartialAt = null;
 function queueUtterance(t, speechEnd, lastWords) {
   heardBuffer.push(t);
@@ -310,6 +311,7 @@ function queueUtterance(t, speechEnd, lastWords) {
 // The mic stream has echo cancellation on, so the agent's own voice is mostly removed before recognition;
 // anything that still sounds like the reply is ignored by isEcho(). The caller's words interrupt the reply.
 let session = null;   // {recognizer, stream, refresh}
+const MIN_WORDS_TO_SWITCH = 3;
 function candidateLanguages() {
   return [...new Set([$('lang').value, 'en-IN', 'hi-IN'])];
 }
@@ -332,7 +334,10 @@ async function startSession() {
     if (e.result.reason !== SDK.ResultReason.RecognizedSpeech) return;
     const t = (e.result.text || '').trim();
     if (!t || (speaking && isEcho(t))) return;
-    try { setLanguage(SDK.AutoDetectSourceLanguageResult.fromResult(e.result).language, 'detected from your voice'); } catch {}
+    // Language detection is unreliable on a word or two ("Thank you", "No", "SGG Nano" often come back as
+    // Hindi), so only a sentence of 3+ words may switch the language.
+    if (words(t).length >= MIN_WORDS_TO_SWITCH)
+      try { setLanguage(SDK.AutoDetectSourceLanguageResult.fromResult(e.result).language, 'detected from your voice'); } catch {}
     if (speaking) interrupt();
     // Only a partial result from this sentence counts (an old one, e.g. from before the tab was in the
     // background, would make the wait look minutes long).
