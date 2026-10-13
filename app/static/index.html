@@ -133,14 +133,29 @@ function timingText(t) {
   const after = (k) => t[k] != null && t.llmDone != null ? '+' + s(t[k] - t.llmDone) : '–';
   const agent = t.server && t.server.llm != null ? ' (agent ' + s(t.server.llm) + ')' : '';
   const azure = t.server && t.server.tts_first_audio != null ? ' (Azure ' + s(t.server.tts_first_audio) + ')' : '';
+  const stopped = stoppedAt(t);
   const heard = t.recognized != null
-    ? 'you stopped → recognised ' + (t.lastWords != null ? s(t.recognized - t.lastWords) : '–') +
+    ? 'you stopped → recognised ' + (stopped != null ? s(t.recognized - stopped) : '–') +
+      (t.speechEnd != null && t.lastWords != null ? ' (last partial → recognised ' + s(t.recognized - t.lastWords) + ')' : '') +
       ' → sent ' + s(t.sent - t.recognized) + ' · '
     : '';
   return '⏱ ' + heard + 'reply ' + s(t.llmDone - t.sent) + agent + ' · after reply: voice request ' + after('ttsReq') +
     ', first audio ' + after('firstChunk') + azure + ', playing ' + after('playing') +
     (t.mode ? ' · ' + t.mode : '') +
-    (t.lastWords != null && t.playing != null ? ' · TOTAL you stopped → voice ' + s(t.playing - t.lastWords) : '');
+    (stopped != null && t.playing != null ? ' · TOTAL you stopped → voice ' + s(t.playing - stopped) : '');
+}
+// When the caller actually stopped talking: the end of their speech in Azure's audio timeline when available,
+// otherwise the last partial result (which arrives after their last word, so it understates the wait).
+function stoppedAt(t) { return t.speechEnd != null ? t.speechEnd : t.lastWords; }
+
+// Azure reports each result's position in the audio stream (offset + duration, in 100-nanosecond ticks from the
+// first audio sample of the session). Audio is streamed in real time, so session start + that position = the
+// moment the caller's speech ended, on the page's clock. Accurate to about ±0.1 s (when the first sample is read).
+function speechEndTime(audioStart, offsetTicks, durationTicks, heardAt) {
+  if (audioStart == null || !(offsetTicks >= 0) || !(durationTicks >= 0)) return null;
+  const end = audioStart + (offsetTicks + durationTicks) / 10000;
+  const lag = heardAt - end;
+  return lag >= 0 && lag < 10000 ? end : null;          // impossible values: don't trust this result's clock
 }
 
 // ---------- reply voice: Azure Speech (streamed), browser voice as fallback ----------
@@ -264,8 +279,9 @@ async function send(text, marks) {
     bubble.appendChild(tm);
     console.table(Object.fromEntries(Object.entries(t).filter(([k, v]) => typeof v === 'number')
       .map(([k, v]) => [k, {ms_after_send: Math.round(v - t.sent), ms_after_reply: Math.round(v - t.llmDone)}])));
-    if (t.lastWords != null && t.playing != null)
-      console.log('caller stopped talking → agent voice playing: ' + ((t.playing - t.lastWords) / 1000).toFixed(2) + ' s');
+    if (stoppedAt(t) != null && t.playing != null)
+      console.log('caller stopped talking → agent voice playing: ' + ((t.playing - stoppedAt(t)) / 1000).toFixed(2) +
+                  ' s (' + (t.speechEnd != null ? "from Azure's audio timeline" : 'from the last partial result') + ')');
   } catch (e) {
     log('sys err', e.message);
   } finally {
@@ -282,9 +298,9 @@ function interrupt() { if (speaking && finishSpeaking) finishSpeaking(true); }
 // recognized = Azure decided the sentence was over. The send then waits MERGE_MS for a follow-on sentence.
 const MERGE_MS = 1200;
 let heardBuffer = [], heardTimer = null, lastPartialAt = null;
-function queueUtterance(t) {
+function queueUtterance(t, speechEnd) {
   heardBuffer.push(t);
-  const marks = {lastWords: lastPartialAt, recognized: now()};
+  const marks = {lastWords: lastPartialAt, recognized: now(), speechEnd: speechEnd == null ? null : speechEnd};
   clearTimeout(heardTimer);
   heardTimer = setTimeout(() => { const all = heardBuffer.join(' '); heardBuffer = []; send(all, marks); }, MERGE_MS);
 }
@@ -309,18 +325,21 @@ async function startSession() {
     if (t && !(speaking && isEcho(t))) lastPartialAt = now();
     if (speaking && $('bargein').checked && words(t).length >= 2 && !isEcho(t)) interrupt();
   };
+  let audioStart = null;                               // page time of the session's first audio sample
   recognizer.recognized = (_, e) => {
+    const heardAt = now();
     if (e.result.reason !== SDK.ResultReason.RecognizedSpeech) return;
     const t = (e.result.text || '').trim();
     if (!t || (speaking && isEcho(t))) return;
     try { setLanguage(SDK.AutoDetectSourceLanguageResult.fromResult(e.result).language, 'detected from your voice'); } catch {}
     if (speaking) interrupt();
-    queueUtterance(t);
+    queueUtterance(t, speechEndTime(audioStart, e.result.offset, e.result.duration, heardAt));
   };
   recognizer.canceled = (_, e) => {
     log('sys err', 'Speech recognition stopped: ' + (e.errorDetails || e.reason));
     stopSession();
   };
+  audioStart = now();
   await new Promise((ok, fail) => recognizer.startContinuousRecognitionAsync(ok, fail));
   const refresh = setInterval(async () => {          // tokens last 10 minutes
     try { recognizer.authorizationToken = (await (await api('/api/speech-token', null, 'GET')).json()).token; } catch {}
