@@ -133,9 +133,14 @@ function timingText(t) {
   const after = (k) => t[k] != null && t.llmDone != null ? '+' + s(t[k] - t.llmDone) : '–';
   const agent = t.server && t.server.llm != null ? ' (agent ' + s(t.server.llm) + ')' : '';
   const azure = t.server && t.server.tts_first_audio != null ? ' (Azure ' + s(t.server.tts_first_audio) + ')' : '';
-  return '⏱ reply ' + s(t.llmDone - t.sent) + agent + ' · after reply: voice request ' + after('ttsReq') +
+  const heard = t.recognized != null
+    ? 'you stopped → recognised ' + (t.lastWords != null ? s(t.recognized - t.lastWords) : '–') +
+      ' → sent ' + s(t.sent - t.recognized) + ' · '
+    : '';
+  return '⏱ ' + heard + 'reply ' + s(t.llmDone - t.sent) + agent + ' · after reply: voice request ' + after('ttsReq') +
     ', first audio ' + after('firstChunk') + azure + ', playing ' + after('playing') +
-    (t.mode ? ' · ' + t.mode : '');
+    (t.mode ? ' · ' + t.mode : '') +
+    (t.lastWords != null && t.playing != null ? ' · TOTAL you stopped → voice ' + s(t.playing - t.lastWords) : '');
 }
 
 // ---------- reply voice: Azure Speech (streamed), browser voice as fallback ----------
@@ -236,7 +241,7 @@ function speak(text, t = {}) {
 }
 
 // ---------- one turn ----------
-async function send(text) {
+async function send(text, marks) {
   text = text.trim();
   if (!text) return;
   if (busy) { pending = text; return; }          // said while the agent was thinking: send it next
@@ -245,7 +250,7 @@ async function send(text) {
   try {
     status('Thinking…');
     const cid = await ensureConversation();
-    const t = {sent: now()};
+    const t = Object.assign({}, marks, {sent: now()});
     const r = await api('/api/chat', {conversation_id: cid, text});
     const reply = (await r.json()).reply || '(no reply)';
     t.llmDone = now(); t.server = serverTiming(r);
@@ -259,6 +264,8 @@ async function send(text) {
     bubble.appendChild(tm);
     console.table(Object.fromEntries(Object.entries(t).filter(([k, v]) => typeof v === 'number')
       .map(([k, v]) => [k, {ms_after_send: Math.round(v - t.sent), ms_after_reply: Math.round(v - t.llmDone)}])));
+    if (t.lastWords != null && t.playing != null)
+      console.log('caller stopped talking → agent voice playing: ' + ((t.playing - t.lastWords) / 1000).toFixed(2) + ' s');
   } catch (e) {
     log('sys err', e.message);
   } finally {
@@ -271,11 +278,15 @@ async function send(text) {
 function interrupt() { if (speaking && finishSpeaking) finishSpeaking(true); }
 
 // Sentences said within a second of each other ("बताओ बताओ। अरे, गर्मी…") become one turn, not two agent calls.
-let heardBuffer = [], heardTimer = null;
+// Timing of the caller's side: lastWords = last partial result (≈ when they stopped talking, a little after),
+// recognized = Azure decided the sentence was over. The send then waits MERGE_MS for a follow-on sentence.
+const MERGE_MS = 1200;
+let heardBuffer = [], heardTimer = null, lastPartialAt = null;
 function queueUtterance(t) {
   heardBuffer.push(t);
+  const marks = {lastWords: lastPartialAt, recognized: now()};
   clearTimeout(heardTimer);
-  heardTimer = setTimeout(() => { const all = heardBuffer.join(' '); heardBuffer = []; send(all); }, 1200);
+  heardTimer = setTimeout(() => { const all = heardBuffer.join(' '); heardBuffer = []; send(all, marks); }, MERGE_MS);
 }
 
 // ---------- listening: one continuous Azure Speech session for the whole call ----------
@@ -295,6 +306,7 @@ async function startSession() {
     SDK.AutoDetectSourceLanguageConfig.fromLanguages(candidateLanguages()), SDK.AudioConfig.fromStreamInput(stream));
   recognizer.recognizing = (_, e) => {
     const t = e.result.text || '';
+    if (t && !(speaking && isEcho(t))) lastPartialAt = now();
     if (speaking && $('bargein').checked && words(t).length >= 2 && !isEcho(t)) interrupt();
   };
   recognizer.recognized = (_, e) => {
