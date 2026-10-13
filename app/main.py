@@ -3,11 +3,12 @@ import base64
 import binascii
 import logging
 import secrets
+import time
 from pathlib import Path
 
 import openai
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -75,10 +76,20 @@ def start_conversation():
         raise HTTPException(502, f"Could not reach the Foundry agent: {exc}") from exc
 
 
+def server_timing(**parts: float) -> str:
+    """Server-Timing header (milliseconds): visible in the browser's DevTools and readable by the page."""
+    return ", ".join(f"{name};dur={secs * 1000:.0f}" for name, secs in parts.items() if secs is not None)
+
+
 @app.post("/api/chat")
 def chat(body: ChatIn):
+    started = time.perf_counter()
     try:
-        return {"reply": foundry_agent.ask(body.conversation_id, body.text)}
+        reply = foundry_agent.ask(body.conversation_id, body.text)
+        llm = time.perf_counter() - started
+        log.info("timing llm=%.0fms chars=%d", llm * 1000, len(reply))
+        return JSONResponse({"reply": reply, "timing": {"llm_ms": round(llm * 1000)}},
+                            headers={"Server-Timing": server_timing(llm=llm)})
     except openai.RateLimitError as exc:
         log.warning("gpt-4o rate limit: %s", exc)
         raise HTTPException(429, "The model is over its tokens-per-minute limit. Wait about a minute and try again, "
@@ -90,13 +101,20 @@ def chat(body: ChatIn):
 
 @app.post("/api/speak")
 def speak(body: SpeakIn):
+    """Streams the reply's audio: the first MP3 chunk goes to the browser as soon as Azure produces it."""
     try:
-        audio, voice = speech.synthesize_with_voice(body.text, body.lang)
-        spoken_lang = speech.language_of(speech.speakable(body.text), body.lang) or ""
-        return Response(audio, media_type="audio/mpeg", headers={"X-Voice": voice, "X-Lang": spoken_lang})
+        stream = speech.synthesize_stream(body.text, body.lang)
+        stream.first_chunk()                       # measured here, then sent first; the rest follows as it arrives
     except Exception as exc:
         log.warning("Azure Speech failed, browser will fall back to its own voice: %s", exc)
         raise HTTPException(502, str(exc)) from exc
+    t = stream.timing
+    log.info("timing tts azure_headers=%.0fms first_audio=%.0fms voice=%s",
+             t["azure_headers"] * 1000, t["first_audio"] * 1000, stream.voice)
+    return StreamingResponse(iter(stream), media_type="audio/mpeg", headers={
+        "X-Voice": stream.voice, "X-Lang": stream.lang or "",
+        "Server-Timing": server_timing(tts_azure_headers=t["azure_headers"], tts_first_audio=t["first_audio"]),
+        "Cache-Control": "no-store"})
 
 
 @app.get("/health")

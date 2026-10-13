@@ -1,9 +1,14 @@
-"""Text to speech with Azure Speech neural voices (REST API, one request per reply).
+"""Text to speech with Azure Speech neural voices (REST API, one request per reply, streamed).
+
+Azure sends the MP3 as it synthesises it; synthesize_stream() passes the chunks on as they arrive, so the browser
+can start playing the first words while the rest is still being made. All requests share one HTTP client, so the
+TLS connection to Azure Speech is kept open and reused between replies instead of being set up for every reply.
 
 Each language gets a native voice (a Hindi speaker for Hindi, and so on), so replies don't sound like an
 English voice reading another language. If a native voice is rejected, the multilingual voice is used.
 """
 import re
+import time
 from xml.sax.saxutils import escape, quoteattr
 
 import httpx
@@ -110,14 +115,31 @@ def ssml(text: str, lang: str | None, voice: str) -> str:
             f"<voice name={quoteattr(voice)}>{body}</voice></speak>")
 
 
+_client: httpx.Client | None = None
+
+
+def http() -> httpx.Client:
+    """One keep-alive client for all Azure Speech calls (a warm server reuses the open TLS connection)."""
+    global _client
+    if _client is None:
+        _client = httpx.Client(timeout=httpx.Timeout(20, connect=5), headers={"User-Agent": "azure-call-agent"},
+                               limits=httpx.Limits(max_keepalive_connections=4, keepalive_expiry=120))
+    return _client
+
+
 def _request(text: str, lang: str | None, voice: str) -> httpx.Response:
+    """Starts synthesis and returns as soon as Azure answers with a status; the audio body is read later."""
     url = f"https://{settings.speech_region}.tts.speech.microsoft.com/cognitiveservices/v1"
-    return httpx.post(url, content=ssml(text, lang, voice).encode("utf-8"), timeout=20, headers={
+    req = http().build_request("POST", url, content=ssml(text, lang, voice).encode("utf-8"), headers={
         "Ocp-Apim-Subscription-Key": settings.speech_key,
         "Content-Type": "application/ssml+xml",
         "X-Microsoft-OutputFormat": OUTPUT_FORMAT,
-        "User-Agent": "azure-call-agent",
     })
+    resp = http().send(req, stream=True)
+    if resp.status_code != 200:
+        resp.read()          # error bodies are small; read them so the message can be shown and the connection reused
+        resp.close()
+    return resp
 
 
 _voice_list: list[dict] | None = None
@@ -129,7 +151,7 @@ def available_voices() -> list[dict]:
     global _voice_list
     if _voice_list is None:
         url = f"https://{settings.speech_region}.tts.speech.microsoft.com/cognitiveservices/voices/list"
-        resp = httpx.get(url, timeout=20, headers={"Ocp-Apim-Subscription-Key": settings.speech_key})
+        resp = http().get(url, headers={"Ocp-Apim-Subscription-Key": settings.speech_key})
         _voice_list = resp.json() if resp.status_code == 200 else []
     return _voice_list
 
@@ -141,11 +163,45 @@ def pick_voice(lang: str, catalogue: list[dict]) -> str | None:
     return matches[0]["ShortName"] if matches else None
 
 
-def synthesize_with_voice(text: str, lang: str | None = None) -> tuple[bytes, str]:
-    """Returns (mp3 audio, voice used). If the configured voice for a language is rejected, a real voice
-    for that language is looked up in Azure's voice list; the multilingual voice is the last resort."""
+class SpeechStream:
+    """Audio being synthesised: iterate it for MP3 chunks as Azure sends them.
+
+    timing (seconds, from the start of the call): azure_headers = Azure accepted the request,
+    first_audio = first audio chunk arrived (filled in by first_chunk()). Fallback voices add to both.
+    """
+
+    def __init__(self, resp: httpx.Response, voice: str, lang: str | None, started: float):
+        self.voice, self.lang, self._resp, self._started = voice, lang, resp, started
+        self.timing = {"azure_headers": time.perf_counter() - started}
+        self._chunks = resp.iter_bytes()
+        self._first: bytes | None = None
+
+    def first_chunk(self) -> bytes:
+        """Waits for the first audio chunk (so its arrival time can be measured before the reply is sent)."""
+        if self._first is None:
+            self._first = next(self._chunks, b"")
+            self.timing["first_audio"] = time.perf_counter() - self._started
+        return self._first
+
+    def __iter__(self):
+        try:
+            first = self.first_chunk()
+            if first:
+                yield first
+            yield from self._chunks
+        finally:
+            self._resp.close()
+
+    def close(self):
+        self._resp.close()
+
+
+def synthesize_stream(text: str, lang: str | None = None) -> SpeechStream:
+    """Starts synthesis and returns the audio as a stream. If the configured voice for a language is rejected,
+    a real voice for that language is looked up in Azure's voice list; the multilingual voice is the last resort."""
     if not settings.speech_key:
         raise SpeechError("Set SPEECH_KEY (or FOUNDRY_API_KEY) in .env")
+    started = time.perf_counter()
     text = speakable(text)
     lang = language_of(text, lang)     # Hindi text gets a Hindi voice even if English was picked
     voice = _resolved.get(lang or "") or voice_for(lang)
@@ -162,7 +218,13 @@ def synthesize_with_voice(text: str, lang: str | None = None) -> tuple[bytes, st
         resp = _request(text, lang, voice)
     if resp.status_code != 200:
         raise SpeechError(f"Azure Speech returned {resp.status_code}: {resp.text[:200] or resp.reason_phrase}")
-    return resp.content, voice
+    return SpeechStream(resp, voice, lang, started)
+
+
+def synthesize_with_voice(text: str, lang: str | None = None) -> tuple[bytes, str]:
+    """Returns (whole mp3, voice used): the stream, read to the end."""
+    stream = synthesize_stream(text, lang)
+    return b"".join(stream), stream.voice
 
 
 def issue_token() -> str:
@@ -170,7 +232,7 @@ def issue_token() -> str:
     if not settings.speech_key:
         raise SpeechError("Set SPEECH_KEY (or FOUNDRY_API_KEY) in .env")
     url = f"https://{settings.speech_region}.api.cognitive.microsoft.com/sts/v1.0/issueToken"
-    resp = httpx.post(url, timeout=10, headers={"Ocp-Apim-Subscription-Key": settings.speech_key})
+    resp = http().post(url, timeout=10, headers={"Ocp-Apim-Subscription-Key": settings.speech_key})
     if resp.status_code != 200:
         raise SpeechError(f"Azure Speech token request returned {resp.status_code}: {resp.text[:200]}")
     return resp.text

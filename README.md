@@ -138,6 +138,22 @@ The site signs in to Foundry as a **service principal** (an Entra app identity w
    Actions workflow and deploys on every push.
 6. Open `https://<name>.azurewebsites.net`, sign in with any username and `APP_PASSWORD`.
 
+## Latency: where the time goes
+
+Under every spoken reply the page shows a timing line, e.g.
+`⏱ reply 2.31 s (agent 2.05 s) · after reply: voice request +0.01 s, first audio +0.38 s (Azure 0.22 s), playing +0.45 s · streamed`.
+The same numbers are in the browser console (a table per turn) and in DevTools → Network → Timing (`Server-Timing`).
+
+| Mark | Meaning |
+|---|---|
+| reply / agent | browser waited for `/api/chat` / the Foundry agent's own time (LLM + File search) |
+| voice request | `/api/speak` sent, measured from the moment the reply arrived |
+| first audio (Azure) | first MP3 bytes reached the browser (the server got them from Azure after this long) |
+| playing | the audio element actually started playing |
+| streamed / buffered | MP3 played while downloading (Media Source Extensions) or downloaded whole first (browsers without MSE for MP3, e.g. older iPhones) |
+
+The server keeps one HTTP connection to Azure Speech open between replies and passes Azure's audio on chunk by chunk.
+
 ## Settings (`.env`)
 
 | Setting | What it is |

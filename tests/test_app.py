@@ -2,6 +2,7 @@ import dataclasses
 from types import SimpleNamespace as NS
 
 import pytest
+import httpx
 from fastapi.testclient import TestClient
 
 from app import foundry_agent, main, speech
@@ -10,6 +11,25 @@ from app import foundry_agent, main, speech
 @pytest.fixture
 def client():
     return TestClient(main.app)
+
+
+def fake_stream(audio=b"ID3fake-mp3", voice="hi-IN-SwaraNeural"):
+    """What speech.synthesize_stream returns, for a reply whose audio is `audio`."""
+    def make(text, lang=None):
+        lang = speech.language_of(speech.speakable(text), lang)
+        return speech.SpeechStream(httpx.Response(200, content=audio), voice, lang, 0.0)
+    return make
+
+
+@pytest.fixture
+def azure_tts(monkeypatch):
+    """Routes speech.http() to a handler(request) -> httpx.Response instead of Azure."""
+    def install(handler):
+        monkeypatch.setattr(speech, "settings", dataclasses.replace(speech.settings, speech_key="k",
+                                                                    speech_region="eastus2"))
+        monkeypatch.setattr(speech, "_client", httpx.Client(transport=httpx.MockTransport(handler)))
+    yield install
+    speech._client = None
 
 
 def test_page_has_mic_language_picker_and_text_box(client):
@@ -22,7 +42,7 @@ def test_conversation_chat_and_speak_go_to_foundry_and_speech(client, monkeypatc
     calls = []
     monkeypatch.setattr(foundry_agent, "new_conversation", lambda: "conv_123")
     monkeypatch.setattr(foundry_agent, "ask", lambda cid, text: calls.append((cid, text)) or "Namaste! Kaise madad karun?")
-    monkeypatch.setattr(speech, "synthesize_with_voice", lambda text, lang=None: (b"ID3fake-mp3", "hi-IN-SwaraNeural"))
+    monkeypatch.setattr(speech, "synthesize_stream", fake_stream())
 
     cid = client.post("/api/conversation").json()["conversation_id"]
     reply = client.post("/api/chat", json={"conversation_id": cid, "text": "Mera chhat tapak raha hai"}).json()["reply"]
@@ -38,7 +58,7 @@ def test_failures_return_readable_errors(client, monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("PermissionDenied")
     monkeypatch.setattr(foundry_agent, "ask", boom)
-    monkeypatch.setattr(speech, "synthesize_with_voice", boom)
+    monkeypatch.setattr(speech, "synthesize_stream", boom)
     r = client.post("/api/chat", json={"conversation_id": "c", "text": "hi"})
     assert r.status_code == 502 and "PermissionDenied" in r.json()["detail"]
     assert client.post("/api/speak", json={"text": "hi"}).status_code == 502  # browser then uses its own voice
@@ -89,21 +109,20 @@ def test_each_language_gets_a_native_voice_with_overrides(monkeypatch):
     assert speech.voice_for("hi-IN") == "hi-IN-MadhurNeural"
 
 
-def test_rejected_native_voice_falls_back_to_multilingual(monkeypatch):
+def test_rejected_native_voice_falls_back_to_multilingual(monkeypatch, azure_tts):
     tried = []
 
-    def fake_post(url, content, timeout, headers):
-        voice = "hi-IN-SwaraNeural" if "SwaraNeural" in content.decode() else "multi"
+    def handler(request):
+        voice = "hi-IN-SwaraNeural" if "SwaraNeural" in request.content.decode() else "multi"
         tried.append(voice)
-        return NS(status_code=400 if voice == "hi-IN-SwaraNeural" else 200, content=b"mp3", text="bad voice",
-                  reason_phrase="")
+        return httpx.Response(400 if voice == "hi-IN-SwaraNeural" else 200,
+                              content=b"bad voice" if voice == "hi-IN-SwaraNeural" else b"mp3")
 
-    monkeypatch.setattr(speech, "settings", dataclasses.replace(speech.settings, speech_key="k"))
-    monkeypatch.setattr(speech.httpx, "post", fake_post)
+    azure_tts(handler)
     monkeypatch.setattr(speech, "available_voices", lambda: [])   # no Hindi voice found in Azure's list either
     monkeypatch.setattr(speech, "_resolved", {})
     audio, voice = speech.synthesize_with_voice("नमस्ते", "hi-IN")
-    assert tried == ["hi-IN-SwaraNeural", "multi"] and voice == speech.settings.speech_voice
+    assert tried == ["hi-IN-SwaraNeural", "multi"] and voice == speech.settings.speech_voice and audio == b"mp3"
 
 
 def test_formatting_is_not_read_aloud():
@@ -111,18 +130,54 @@ def test_formatting_is_not_read_aloud():
     assert speech.speakable(raw) == "Options: SGG Antelio Plus - solar control Cool-lite colours"
 
 
-def test_speech_request_shape(monkeypatch):
+def test_speech_request_shape(azure_tts):
     seen = {}
 
-    def fake_post(url, content, timeout, headers):
-        seen.update(url=url, headers=headers, body=content.decode())
-        return NS(status_code=200, content=b"mp3", text="", reason_phrase="OK")
+    def handler(request):
+        seen.update(url=str(request.url), headers=request.headers, body=request.content.decode())
+        return httpx.Response(200, content=b"mp3")
 
-    monkeypatch.setattr(speech, "settings", dataclasses.replace(speech.settings, speech_key="k", speech_region="eastus2"))
-    monkeypatch.setattr(speech.httpx, "post", fake_post)
+    azure_tts(handler)
     assert speech.synthesize("Bonjour", "fr-FR") == b"mp3"
     assert seen["url"] == "https://eastus2.tts.speech.microsoft.com/cognitiveservices/v1"
     assert seen["headers"]["Ocp-Apim-Subscription-Key"] == "k" and "fr-FR" in seen["body"]
+    assert seen["headers"]["X-Microsoft-OutputFormat"] == speech.OUTPUT_FORMAT
+
+
+def test_speech_reuses_one_connection_client(azure_tts):
+    azure_tts(lambda request: httpx.Response(200, content=b"mp3"))
+    first = speech.http()
+    speech.synthesize("one", "en-IN")
+    speech.synthesize("two", "en-IN")
+    assert speech.http() is first                       # same client, so its open connection is reused
+
+
+def test_audio_is_passed_on_chunk_by_chunk(azure_tts):
+    chunks = [b"ID3-first", b"-second", b"-third"]
+
+    class Slow(httpx.SyncByteStream):
+        def __iter__(self):
+            yield from chunks
+
+    azure_tts(lambda request: httpx.Response(200, stream=Slow()))
+    stream = speech.synthesize_stream("Hello there", "en-IN")
+    assert stream.first_chunk() == b"ID3-first"         # available before the rest has been read
+    assert "first_audio" in stream.timing and stream.timing["first_audio"] >= stream.timing["azure_headers"]
+    assert b"".join(stream) == b"".join(chunks)
+
+
+def test_speak_streams_with_timing_headers(client, monkeypatch):
+    monkeypatch.setattr(speech, "synthesize_stream", fake_stream(b"mp3-bytes", "en-IN-NeerjaNeural"))
+    r = client.post("/api/speak", json={"text": "Hello", "lang": "en-IN"})
+    assert r.status_code == 200 and r.content == b"mp3-bytes"
+    assert "tts_first_audio;dur=" in r.headers["server-timing"] and r.headers["x-voice"] == "en-IN-NeerjaNeural"
+
+
+def test_chat_reports_llm_time(client, monkeypatch):
+    monkeypatch.setattr(foundry_agent, "ask", lambda cid, text: "Hi")
+    r = client.post("/api/chat", json={"conversation_id": "c", "text": "hi"})
+    assert r.json()["reply"] == "Hi" and isinstance(r.json()["timing"]["llm_ms"], int)
+    assert r.headers["server-timing"].startswith("llm;dur=")
 
 
 def test_password_protects_everything_but_health(monkeypatch):
@@ -155,20 +210,18 @@ def test_server_never_tries_a_browser_sign_in(monkeypatch):
     foundry_agent.credential.cache_clear()
 
 
-def test_rejected_voice_is_replaced_from_azures_voice_list(monkeypatch):
+def test_rejected_voice_is_replaced_from_azures_voice_list(monkeypatch, azure_tts):
     calls = []
 
-    def fake_post(url, content, timeout, headers):
-        body = content.decode()
+    def handler(request):
+        body = request.content.decode()
         calls.append(body)
-        ok = "or-IN-RealVoiceNeural" in body
-        return NS(status_code=200 if ok else 400, content=b"mp3", text="", reason_phrase="")
+        return httpx.Response(200 if "or-IN-RealVoiceNeural" in body else 400, content=b"mp3")
 
     catalogue = [{"ShortName": "or-IN-MaleVoiceNeural", "Locale": "or-IN", "Gender": "Male"},
                  {"ShortName": "or-IN-RealVoiceNeural", "Locale": "or-IN", "Gender": "Female"},
                  {"ShortName": "hi-IN-SwaraNeural", "Locale": "hi-IN", "Gender": "Female"}]
-    monkeypatch.setattr(speech, "settings", dataclasses.replace(speech.settings, speech_key="k"))
-    monkeypatch.setattr(speech.httpx, "post", fake_post)
+    azure_tts(handler)
     monkeypatch.setattr(speech, "available_voices", lambda: catalogue)
     monkeypatch.setattr(speech, "_resolved", {})
     audio, voice = speech.synthesize_with_voice("ନମସ୍କାର", "or-IN")
@@ -189,7 +242,7 @@ def test_voice_follows_the_script_of_the_reply():
 
 
 def test_speak_reports_the_language_it_spoke(client, monkeypatch):
-    monkeypatch.setattr(speech, "synthesize_with_voice", lambda text, lang=None: (b"mp3", "hi-IN-SwaraNeural"))
+    monkeypatch.setattr(speech, "synthesize_stream", fake_stream(b"mp3"))
     r = client.post("/api/speak", json={"text": "यह ग्लास गर्मी रोकता है", "lang": "en-IN"})
     assert r.headers["x-lang"] == "hi-IN"
 

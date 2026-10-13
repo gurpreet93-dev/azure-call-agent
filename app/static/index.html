@@ -119,23 +119,104 @@ function setLanguage(lang, why) {
   log('sys', 'Language: ' + sel.selectedOptions[0].text + ' (' + why + ').');
 }
 
-// ---------- reply voice: Azure Speech, browser voice as fallback ----------
-function speak(text) {
+// ---------- timing: where the wait between "reply ready" and "voice starts" goes ----------
+const now = () => performance.now();
+function serverTiming(r) {                     // Server-Timing header -> {llm: ms, tts_first_audio: ms, ...}
+  const out = {};
+  (r.headers.get('Server-Timing') || '').split(',').forEach(p => {
+    const m = p.match(/([\w-]+);dur=([\d.]+)/); if (m) out[m[1]] = +m[2];
+  });
+  return out;
+}
+function timingText(t) {
+  const s = (ms) => (ms / 1000).toFixed(2) + ' s';
+  const after = (k) => t[k] != null && t.llmDone != null ? '+' + s(t[k] - t.llmDone) : '–';
+  const agent = t.server && t.server.llm != null ? ' (agent ' + s(t.server.llm) + ')' : '';
+  const azure = t.server && t.server.tts_first_audio != null ? ' (Azure ' + s(t.server.tts_first_audio) + ')' : '';
+  return '⏱ reply ' + s(t.llmDone - t.sent) + agent + ' · after reply: voice request ' + after('ttsReq') +
+    ', first audio ' + after('firstChunk') + azure + ', playing ' + after('playing') +
+    (t.mode ? ' · ' + t.mode : '');
+}
+
+// ---------- reply voice: Azure Speech (streamed), browser voice as fallback ----------
+// Streaming: the MP3 is fed to the player through Media Source Extensions as chunks arrive, so playback starts
+// on the first chunk. Browsers without MSE for MP3 (older iPhones) download the whole file first, as before.
+const canStream = !!(window.MediaSource && MediaSource.isTypeSupported && MediaSource.isTypeSupported('audio/mpeg'));
+
+async function readAll(r, t) {                 // whole response, noting when the first chunk arrived
+  const reader = r.body.getReader(), parts = [];
+  for (;;) {
+    const {value, done} = await reader.read();
+    if (done) break;
+    if (t.firstChunk == null) t.firstChunk = now();
+    parts.push(value);
+  }
+  return new Blob(parts, {type: 'audio/mpeg'});
+}
+
+// Plays the response as it downloads. Returns false (body untouched) if MSE can't be set up, so the caller can
+// fall back to the buffered player with the same response.
+async function playStreaming(r, t, isDone, fin) {
+  const ms = new MediaSource(), url = URL.createObjectURL(ms);
+  let sb;
+  try {
+    player.src = url;
+    await new Promise((ok, fail) => { ms.addEventListener('sourceopen', ok, {once: true});
+                                      setTimeout(() => fail(new Error('sourceopen timeout')), 3000); });
+    sb = ms.addSourceBuffer('audio/mpeg');
+  } catch (e) { URL.revokeObjectURL(url); return false; }
+  const append = (chunk) => new Promise((ok, fail) => {
+    sb.addEventListener('updateend', ok, {once: true}); sb.addEventListener('error', fail, {once: true});
+    sb.appendBuffer(chunk);
+  });
+  player.onended = () => { URL.revokeObjectURL(url); fin(false); };
+  player.onerror = () => fin(false, 'audio playback failed');
+  const reader = r.body.getReader();
+  let started = false;
+  for (;;) {
+    const {value, done} = await reader.read();
+    if (isDone()) { reader.cancel().catch(() => {}); URL.revokeObjectURL(url); return true; }
+    if (done) break;
+    if (t.firstChunk == null) t.firstChunk = now();
+    await append(value);
+    if (!started) { started = true; await player.play(); }
+  }
+  if (ms.readyState === 'open') ms.endOfStream();
+  if (!started) fin(false, 'no audio received');
+  return true;
+}
+
+function speak(text, t = {}) {
   const lang = $('lang').value;
   speaking = true; replyWords = new Set(words(text));
   return new Promise(async (resolve) => {
     let done = false, via = 'Azure Speech';
     finishSpeaking = (interrupted, why) => {
       if (done) return; done = true; speaking = false; finishSpeaking = null;
-      player.pause(); window.speechSynthesis && speechSynthesis.cancel();
+      player.pause(); player.onplaying = null; window.speechSynthesis && speechSynthesis.cancel();
       resolve({via: why || via, interrupted: !!interrupted});
     };
     const fin = finishSpeaking;
+    player.onplaying = () => { if (t.playing == null) t.playing = now(); };
+    player.onerror = null;
     try {
-      const r = await api('/api/speak', {text, lang});
+      t.ttsReq = now();
+      let r = await api('/api/speak', {text, lang});
+      t.ttsHeaders = now();
+      t.server = Object.assign(t.server || {}, serverTiming(r));
       via = 'Azure Speech · ' + (r.headers.get('X-Voice') || '');
       setLanguage(r.headers.get('X-Lang'), 'the agent is replying in it');
-      const url = URL.createObjectURL(await r.blob());
+      if (canStream && r.body) {
+        try {
+          if (await playStreaming(r, t, () => done, fin)) { t.mode = 'streamed'; return; }
+        } catch (e) {
+          if (done || t.playing != null) return fin(false, via + ' (stream cut short)');
+          t.firstChunk = null;
+          r = await api('/api/speak', {text, lang});      // body partly used: fetch again, buffered
+        }
+      }
+      t.mode = 'buffered';
+      const url = URL.createObjectURL(r.body ? await readAll(r, t) : await r.blob());
       if (done) return URL.revokeObjectURL(url);
       player.src = url;
       player.onended = () => { URL.revokeObjectURL(url); fin(false); };
@@ -146,6 +227,7 @@ function speak(text) {
       via = 'browser voice (Azure Speech failed: ' + e.message + ')';
       if (!window.speechSynthesis) return fin(false, 'not spoken (' + e.message + ')');
       const u = new SpeechSynthesisUtterance(text); u.lang = lang;
+      u.onstart = () => { if (t.playing == null) t.playing = now(); };
       u.onend = u.onerror = () => fin(false);
       setTimeout(() => fin(false), 3000 + text.length * 90);   // some browsers never fire onend
       speechSynthesis.cancel(); speechSynthesis.speak(u);
@@ -162,14 +244,21 @@ async function send(text) {
   log('you', text);
   try {
     status('Thinking…');
-    const r = await api('/api/chat', {conversation_id: await ensureConversation(), text});
+    const cid = await ensureConversation();
+    const t = {sent: now()};
+    const r = await api('/api/chat', {conversation_id: cid, text});
     const reply = (await r.json()).reply || '(no reply)';
+    t.llmDone = now(); t.server = serverTiming(r);
     const bubble = log('agent', reply.replace(/【[^】]*】/g, ''));
     status(session ? 'Speaking… (just talk, or tap the mic, to interrupt)' : 'Speaking… (tap the mic to interrupt)');
-    const res = await speak(reply);
+    const res = await speak(reply, t);
     const m = document.createElement('div'); m.className = 'meta';
     m.textContent = 'voice: ' + res.via + (res.interrupted ? ' · interrupted' : '');
     bubble.appendChild(m);
+    const tm = document.createElement('div'); tm.className = 'meta timing'; tm.textContent = timingText(t);
+    bubble.appendChild(tm);
+    console.table(Object.fromEntries(Object.entries(t).filter(([k, v]) => typeof v === 'number')
+      .map(([k, v]) => [k, {ms_after_send: Math.round(v - t.sent), ms_after_reply: Math.round(v - t.llmDone)}])));
   } catch (e) {
     log('sys err', e.message);
   } finally {
