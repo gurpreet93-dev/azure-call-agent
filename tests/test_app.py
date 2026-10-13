@@ -292,3 +292,35 @@ def test_limits_dropped_if_the_agent_service_refuses_them(monkeypatch):
     assert foundry_agent.ask("c", "hi") == "ok" and foundry_agent.ask("c", "again") == "ok"
     assert [("max_output_tokens" in c) for c in calls] == [True, False, False]   # learns after the first refusal
     monkeypatch.setattr(foundry_agent, "_limits_supported", True)
+
+
+def test_agent_client_fails_fast_instead_of_waiting_out_rate_limits(monkeypatch):
+    import openai as oa
+
+    class FakeProject:
+        def __init__(self, **kw):
+            pass
+
+        def get_openai_client(self):
+            return oa.OpenAI(api_key="x", base_url="https://example.invalid/v1")
+
+    foundry_agent._openai_client.cache_clear()
+    monkeypatch.setattr(foundry_agent, "AIProjectClient", FakeProject)
+    monkeypatch.setattr(foundry_agent, "credential", lambda: None)
+    monkeypatch.setattr(foundry_agent, "settings", dataclasses.replace(
+        foundry_agent.settings, foundry_project_endpoint="https://r.services.ai.azure.com/api/projects/p",
+        foundry_agent_name="a"))
+    client = foundry_agent._openai_client()
+    assert client.max_retries == 0 and client.timeout == foundry_agent.AGENT_TIMEOUT_S
+    foundry_agent._openai_client.cache_clear()
+
+
+def test_agent_timeout_is_a_readable_error(client, monkeypatch):
+    import openai as oa
+
+    def slow(cid, text):
+        raise oa.APITimeoutError(request=httpx.Request("POST", "https://x"))
+
+    monkeypatch.setattr(foundry_agent, "ask", slow)
+    r = client.post("/api/chat", json={"conversation_id": "c", "text": "hi"})
+    assert r.status_code == 504 and "longer than" in r.json()["detail"]

@@ -96,9 +96,16 @@ function log(cls, text, meta) {
   return d;
 }
 function status(t) { $('status').textContent = t; }
+const API_TIMEOUT_MS = 60000;      // the server gives up on the agent after 45 s; never leave the caller hanging
 async function api(path, body, method) {
-  const r = await fetch(path, method === 'GET' ? {} :
-    {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})});
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), API_TIMEOUT_MS);
+  let r;
+  try {
+    r = await fetch(path, method === 'GET' ? {signal: ctl.signal} :
+      {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {}), signal: ctl.signal});
+  } catch (e) {
+    throw new Error(e.name === 'AbortError' ? 'No answer after ' + API_TIMEOUT_MS / 1000 + ' seconds. Please try again.' : e.message);
+  } finally { clearTimeout(timer); }
   if (!r.ok) { let msg = r.statusText; try { msg = (await r.json()).detail || msg; } catch {} throw new Error(msg); }
   return r;
 }

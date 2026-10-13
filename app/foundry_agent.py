@@ -14,6 +14,9 @@ from azure.identity import DefaultAzureCredential
 from app.config import settings
 
 
+AGENT_TIMEOUT_S = 45
+
+
 class AgentNotConfigured(RuntimeError):
     pass
 
@@ -31,7 +34,9 @@ def _openai_client():
     if not settings.foundry_project_endpoint or not settings.foundry_agent_name:
         raise AgentNotConfigured("Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_AGENT_NAME in .env")
     project = AIProjectClient(endpoint=settings.foundry_project_endpoint, credential=credential())
-    return project.get_openai_client()
+    # Fail fast on a phone call: the OpenAI library would otherwise wait out a rate limit and retry (up to about
+    # two minutes of silence). One attempt, a hard time limit, and the caller hears a clear message instead.
+    return project.get_openai_client().with_options(timeout=AGENT_TIMEOUT_S, max_retries=0)
 
 
 def _agent_ref() -> dict:

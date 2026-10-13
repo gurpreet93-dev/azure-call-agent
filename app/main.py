@@ -90,6 +90,10 @@ def chat(body: ChatIn):
         log.info("timing llm=%.0fms chars=%d", llm * 1000, len(reply))
         return JSONResponse({"reply": reply, "timing": {"llm_ms": round(llm * 1000)}},
                             headers={"Server-Timing": server_timing(llm=llm)})
+    except openai.APITimeoutError as exc:
+        log.warning("Foundry agent timed out after %ss", foundry_agent.AGENT_TIMEOUT_S)
+        raise HTTPException(504, f"The agent took longer than {foundry_agent.AGENT_TIMEOUT_S} seconds to answer. "
+                                 "Try again, or ask a shorter question.") from exc
     except openai.RateLimitError as exc:
         log.warning("gpt-4o rate limit: %s", exc)
         raise HTTPException(429, "The model is over its tokens-per-minute limit. Wait about a minute and try again, "
