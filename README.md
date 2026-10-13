@@ -138,6 +138,50 @@ The site signs in to Foundry as a **service principal** (an Entra app identity w
    Actions workflow and deploys on every push.
 6. Open `https://<name>.azurewebsites.net`, sign in with any username and `APP_PASSWORD`.
 
+## 5. Chunking lab: our own chunks in Azure AI Search (`search-chunking` branch)
+
+Foundry's File search chunks the brochures itself, and the portal's "Import and vectorize data" wizard uses
+Azure AI Search's default Text Split. Neither shows you the chunks. This lab does the chunking in our code, compares
+two strategies, and pushes the chunks into Azure AI Search, where the Foundry agent can use them.
+
+| Strategy | What it does |
+|---|---|
+| `fixed` | Default-splitter baseline: windows of 256 tokens with 64 overlap, blind to structure. Spec tables get cut mid-table, so a row can lose its header ("which column is the U-value?") and its heading ("single or double glazing?"). |
+| `headings` | Splits on markdown headings, never inside a table (big tables split by rows, header row repeated), and starts each chunk with the heading path, e.g. `Saint-Gobain Infinity > Product specifications > Neutrals — Double Glazed Unit`. |
+
+`rag/questions.json` holds 12 test questions; each lists what a chunk must contain to answer it on its own.
+
+### Azure setup (portal, ~10 minutes)
+1. **Create a resource → Azure AI Search**: same resource group and region as the Foundry resource; pricing tier
+   **Free** (50 MB, 3 indexes; these indexes take about 1 MB). One Free service per subscription.
+   Then **Settings → Keys**: copy the URL (Overview) and the **Primary admin key**.
+2. **Foundry → Models + endpoints → Deploy model → `text-embedding-3-small`** (Standard or Global Standard).
+3. In the Codespace: create a `kb/` folder and drag the brochure `.md` files into it (git-ignored, so the knowledge
+   base stays out of the repo). Add to `.env`:
+   ```
+   SEARCH_ENDPOINT=https://<your-search>.search.windows.net
+   SEARCH_ADMIN_KEY=<primary admin key>
+   EMBEDDING_DEPLOYMENT=text-embedding-3-small
+   FOUNDRY_API_KEY=<Foundry resource key>   # optional; also gives the index a vectorizer for the agent
+   ```
+
+### Run
+```
+python -m scripts.chunking_lab inspect     # sizes; writes kb_chunks/fixed.md and kb_chunks/headings.md to read
+python -m scripts.chunking_lab coverage    # offline: does one chunk hold each whole answer?
+python -m scripts.chunking_lab build       # creates clearview-kb-fixed and clearview-kb-headings, uploads chunks
+python -m scripts.chunking_lab compare     # hybrid search: is an answering chunk in the top 3?
+python -m scripts.chunking_lab compare --mode keyword    # or vector
+```
+Try other sizes: `--size 512 --overlap 128`, `--max-tokens 300`.
+
+### Connect the index to an agent
+Test on a **copy** so the live site keeps working: Foundry → Agents → `clearview-glass-agent` → duplicate it as
+`clearview-glass-agent-search` → remove **File search** → **Knowledge → Add → Azure AI Search** → connect your
+search service → index `clearview-kb-headings` → query type **Hybrid (vector + keyword)** (needs the vectorizer,
+i.e. `FOUNDRY_API_KEY` set when you ran `build`; otherwise choose Simple/keyword). Ask both agents the questions in
+`rag/questions.json` in the playground and compare. To switch the site over, set `FOUNDRY_AGENT_NAME` to the copy.
+
 ## Settings (`.env`)
 
 | Setting | What it is |
