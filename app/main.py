@@ -162,6 +162,14 @@ def chat(body: ChatIn):
                     foundry_agent.remove_items(body.conversation_id, answer.message_ids)
                 except Exception as exc:
                     log.warning("Could not remove the blocked reply: %s", exc)
+        if guarded == "figure without a search":           # ask again, this time with a search required
+            retry = foundry_agent.ask_searching(body.conversation_id, body.text, history, agent=body.agent)
+            if retry and retry.searched:
+                second, why = guard_reply(retry.text, retry.searched, body.text)
+                if not why:
+                    reply, guarded = second, "figure without a search, answered again with a search"
+                    answer = foundry_agent.Answer(retry.text, (answer.input_tokens or 0) + (retry.input_tokens or 0),
+                                                  (answer.cached_tokens or 0) + (retry.cached_tokens or 0), True)
         return JSONResponse({"reply": reply, "guarded": guarded, "agent": body.agent or settings.foundry_agent_name,
                              "timing": {"llm_ms": round(llm * 1000)},
                              "tokens": {"input": answer.input_tokens, "cached": answer.cached_tokens}},

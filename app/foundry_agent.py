@@ -161,8 +161,32 @@ def ask(conversation_id: str | None, text: str, history: list[dict] | None = Non
         return _answer(_create(client, target(), agent))
 
 
-TRIM_CALL_TIMEOUT_S = 3
-TRIM_BUDGET_S = 4
+FORCE_SEARCH_NOTE = ("Search the knowledge base now and answer the caller's last question from the results only.")
+_force_supported = True
+
+
+def ask_searching(conversation_id: str | None, text: str, history: list[dict] | None = None,
+                  agent: str | None = None) -> Answer | None:
+    """Asks again with a search required (tool_choice), after a reply stated a figure without searching.
+
+    In a stored conversation the caller's question is already there, so only a note is sent. Returns None if the
+    agent service doesn't accept a required tool call (the caller then gets the "let me check" reply)."""
+    global _force_supported
+    if not _force_supported:
+        return None
+    note = _message("system", FORCE_SEARCH_NOTE)
+    target = {"conversation": conversation_id, "input": [note]} if history is None else \
+        {"input": [_message(m["role"], m["content"]) for m in history] + [note, _message("user", text)]}
+    try:
+        return _answer(_create(_openai_client(), {**target, "tool_choice": "required"}, agent))
+    except openai.BadRequestError as exc:
+        log.warning("Required search refused by the agent service: %s", exc)
+        _force_supported = False
+        return None
+
+
+TRIM_CALL_TIMEOUT_S = 6
+TRIM_BUDGET_S = 7
 
 
 def trim_search_results(conversation_id: str) -> dict:

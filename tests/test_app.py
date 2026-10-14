@@ -523,6 +523,7 @@ def test_a_figure_without_a_search_this_turn_is_not_spoken(client, monkeypatch):
                                    "kelvin.", searched=False, message_ids=("msg_9",))
     monkeypatch.setattr(foundry_agent, "ask", lambda *a, **k: made_up)
     monkeypatch.setattr(foundry_agent, "remove_items", lambda cid, ids: removed.append((cid, ids)))
+    monkeypatch.setattr(foundry_agent, "ask_searching", lambda *a, **k: None)   # service refuses a required search
     r = client.post("/api/chat", json={"conversation_id": "conv_x", "text": "Nano Silver."}).json()
     assert r["guarded"] == "figure without a search" and "1.0" not in r["reply"]
     assert removed == [("conv_x", ("msg_9",))]
@@ -557,3 +558,27 @@ def test_trim_also_removes_the_reminder(client, monkeypatch):
     monkeypatch.setattr(foundry_agent, "_openai_client", lambda: fake)
     assert client.post("/api/trim", json={"conversation_id": "conv_abc"}).json()["removed"] == 2
     assert sorted(deleted) == ["f", "s"]
+
+
+def test_an_unsearched_figure_is_answered_again_with_a_search(client, monkeypatch):
+    made_up = foundry_agent.Answer("Envision Lumina lets through 60% in double glazing.", 2224, 2048, False, ("m1",))
+    searched = foundry_agent.Answer("Envision Lumina (SKN 165 II) lets through 60% in a double glazed unit.",
+                                    3300, 2048, True)
+    monkeypatch.setattr(foundry_agent, "ask", lambda *a, **k: made_up)
+    monkeypatch.setattr(foundry_agent, "remove_items", lambda *a: None)
+    monkeypatch.setattr(foundry_agent, "ask_searching", lambda *a, **k: searched)
+    r = client.post("/api/chat", json={"conversation_id": "conv_x", "text": "Lumina?"}).json()
+    assert r["reply"] == searched.text and r["guarded"].startswith("figure without a search, answered again")
+    assert r["tokens"]["input"] == 2224 + 3300
+
+
+def test_required_search_is_sent_as_tool_choice(monkeypatch):
+    sent = {}
+    out = [NS(type="remote_function_call", id="fc"), NS(type="message", id="m")]
+    fake = NS(responses=NS(create=lambda **kw: sent.update(kw) or NS(output_text="60%", usage=None, output=out)))
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: fake)
+    monkeypatch.setattr(foundry_agent, "_limits_supported", True)
+    monkeypatch.setattr(foundry_agent, "_force_supported", True)
+    a = foundry_agent.ask_searching("conv_x", "Lumina?")
+    assert a.searched and sent["tool_choice"] == "required" and sent["conversation"] == "conv_x"
+    assert [m["role"] for m in sent["input"]] == ["system"]       # the question is already in the conversation
