@@ -338,7 +338,8 @@ def test_text_history_sends_only_what_was_said_and_no_stored_conversation(client
     assert r.status_code == 200 and r.json()["reply"] == "Yes, 1.8."
     assert r.json()["tokens"] == {"input": 1200, "cached": 900}
     assert "conversation" not in sent
-    assert sent["input"] == history + [{"role": "user", "content": "And single glazed?"}]
+    assert sent["input"] == history + [{"role": "system", "content": foundry_agent.SEARCH_REMINDER},
+                                       {"role": "user", "content": "And single glazed?"}]
 
 
 def test_chat_needs_history_or_a_conversation(client):

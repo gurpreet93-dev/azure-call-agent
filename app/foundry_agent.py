@@ -55,6 +55,12 @@ LIMITS = {"max_output_tokens": settings.agent_max_output_tokens, "max_tool_calls
 _limits_supported = True
 
 
+# Plain-text history shows earlier answers without the searches behind them, and the model copies that: it stopped
+# searching and answered "no confirmed information" (seen in traces). The reminder goes with every turn.
+SEARCH_REMINDER = ("Search the knowledge base for this turn before stating any product fact, even if an earlier "
+                   "answer in this conversation covers it. Earlier answers are not search results.")
+
+
 @dataclass
 class Answer:
     text: str
@@ -77,7 +83,7 @@ def ask(conversation_id: str | None, text: str, history: list[dict] | None = Non
     global _limits_supported
     if history is not None:
         target = {"input": [{"role": m["role"], "content": m["content"]} for m in history] +
-                           [{"role": "user", "content": text}]}
+                           [{"role": "system", "content": SEARCH_REMINDER}, {"role": "user", "content": text}]}
     else:
         target = {"conversation": conversation_id, "input": text}
     client = _openai_client()
