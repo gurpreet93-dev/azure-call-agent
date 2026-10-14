@@ -132,11 +132,24 @@ async function api(path, body, method) {
   if (!r.ok) { let msg = r.statusText; try { msg = (await r.json()).detail || msg; } catch {} throw new Error(msg); }
   return r;
 }
+// Foundry is often slow to create a conversation (408s on the first question of a call), so the page creates it
+// ahead of time: when it opens and on "New conversation", in the background, with retries. The caller's first
+// question then doesn't wait for it.
+let creating = null;
 async function ensureConversation() {
   if (conversationId) return conversationId;
-  conversationId = (await (await api('/api/conversation')).json()).conversation_id;
-  return conversationId;
+  if (!creating) creating = (async () => {
+    let last;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try { return (await (await api('/api/conversation')).json()).conversation_id; }
+      catch (e) { last = e; await new Promise(ok => setTimeout(ok, 1500 * (attempt + 1))); }
+    }
+    throw last;
+  })().then(id => { conversationId = conversationId || id; return conversationId; })
+      .finally(() => { creating = null; });
+  return creating;
 }
+function prepareConversation() { if (STORED_HISTORY) ensureConversation().catch(() => {}); }
 const words = (t) => t.toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
 function isEcho(heard) {            // mostly the reply's own words = the agent heard through the speakers
   const w = words(heard);
@@ -488,10 +501,10 @@ $('mic').onclick = async () => {
   }
 };
 $('typeform').onsubmit = (ev) => { ev.preventDefault(); const t = $('typed').value; $('typed').value = ''; send(t); };
-$('reset').onclick = () => { conversationId = null; history = []; pending = null; interrupt(); $('log').innerHTML = '';
+$('reset').onclick = () => { conversationId = null; setTimeout(prepareConversation, 0); history = []; pending = null; interrupt(); $('log').innerHTML = '';
   log('sys', 'New conversation. The agent has forgotten the previous one.'); };
 $('agent').onchange = () => {       // a new agent starts a new conversation, so each Foundry thread has one agent
-  conversationId = null; history = []; pending = null; interrupt();
+  conversationId = null; setTimeout(prepareConversation, 0); history = []; pending = null; interrupt();
   log('sys', 'Knowledge: ' + $('agent').selectedOptions[0].text + '. New conversation started.');
 };
 $('lang').onchange = () => {
@@ -499,6 +512,7 @@ $('lang').onchange = () => {
   restartListening();
 };
 if (!SDK) log('sys', 'Azure Speech SDK did not load; the browser\'s own recognition will be used (Chrome or Edge).');
+prepareConversation();
 </script>
 </body>
 </html>
