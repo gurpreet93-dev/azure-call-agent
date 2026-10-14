@@ -441,6 +441,7 @@ def test_trim_deletes_search_items_and_keeps_the_conversation_text(client, monke
     fake = NS(conversations=NS(items=NS(
         list=lambda cid, **kw: items if cid == "conv_abc" else [],
         delete=lambda item_id, conversation_id: deleted.append((conversation_id, item_id)))))
+    fake.with_options = lambda **kw: fake
     monkeypatch.setattr(foundry_agent, "_openai_client", lambda: fake)
     r = client.post("/api/trim", json={"conversation_id": "conv_abc"})
     assert r.status_code == 200 and r.json()["removed"] == 2 and r.json()["kept"] == 2
@@ -451,7 +452,9 @@ def test_trim_deletes_search_items_and_keeps_the_conversation_text(client, monke
 def test_trim_failure_is_reported_not_fatal(client, monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("delete not supported")
-    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: NS(conversations=NS(items=NS(list=boom))))
+    fake = NS(conversations=NS(items=NS(list=boom)))
+    fake.with_options = lambda **kw: fake
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: fake)
     r = client.post("/api/trim", json={"conversation_id": "conv_abc"})
     assert r.status_code == 502 and "delete not supported" in r.json()["detail"]
 
@@ -493,8 +496,20 @@ def test_trim_deletes_one_at_a_time_and_retries_a_412(client, monkeypatch):
             raise openai.APIStatusError("Error code: 412 - precondition_failed", response=httpx.Response(
                 412, request=httpx.Request("POST", "https://x")), body=None)
 
-    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: NS(conversations=NS(items=NS(
-        list=lambda cid, **kw: items, delete=delete))))
+    fake = NS(conversations=NS(items=NS(list=lambda cid, **kw: items, delete=delete)))
+    fake.with_options = lambda **kw: fake
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: fake)
     monkeypatch.setattr(foundry_agent.time, "sleep", lambda s: None)
     r = client.post("/api/trim", json={"conversation_id": "conv_abc"})
     assert r.status_code == 200 and r.json()["removed"] == 1 and tries == ["a", "a"]
+
+
+def test_trim_stops_when_its_time_is_up(client, monkeypatch):
+    items = [NS(id=f"t{i}", type="remote_function_call") for i in range(3)]
+    def slow_delete(item_id, conversation_id):          # the first delete uses up the whole time budget
+        monkeypatch.setattr(foundry_agent, "TRIM_BUDGET_S", -1)
+    fake = NS(conversations=NS(items=NS(list=lambda cid, **kw: items, delete=slow_delete)))
+    fake.with_options = lambda **kw: fake
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: fake)
+    r = client.post("/api/trim", json={"conversation_id": "conv_abc"}).json()
+    assert r["removed"] == 1 and r["left"] == 2

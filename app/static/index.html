@@ -328,7 +328,7 @@ async function send(text, marks) {
         const m = document.createElement('div'); m.className = 'meta';
         m.textContent = 'search results removed from the conversation: ' + d.removed + ' item(s)' +
                         (d.types.length ? ' (' + d.types.join(', ') + ')' : '') + ', ' + (d.ms / 1000).toFixed(2) +
-                        ' s · ' + d.kept + ' message(s) kept';
+                        ' s · ' + d.kept + ' message(s) kept' + (d.left ? ' · ' + d.left + ' left (Foundry slow)' : '');
         bubble.appendChild(m);
       }).catch(e => log('sys err', 'Search results not removed (tokens will grow this call): ' + e.message));
     }
