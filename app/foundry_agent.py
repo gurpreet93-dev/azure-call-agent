@@ -7,7 +7,6 @@ browser window opens once to sign in (so nothing else needs installing on a loca
 """
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -165,9 +164,18 @@ def trim_search_results(conversation_id: str) -> dict:
     client = _openai_client()
     items = list(client.conversations.items.list(conversation_id, limit=100, order="desc"))
     doomed = [i.id for i in items if getattr(i, "type", "message") != "message"]
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        list(pool.map(lambda item_id: client.conversations.items.delete(item_id, conversation_id=conversation_id),
-                      doomed))
+    # One at a time: Foundry refuses simultaneous changes to one conversation (412 "modified concurrently").
+    for item_id in doomed:
+        for attempt in range(3):
+            try:
+                client.conversations.items.delete(item_id, conversation_id=conversation_id)
+                break
+            except openai.APIStatusError as exc:
+                if exc.status_code == 404:               # already gone
+                    break
+                if exc.status_code != 412 or attempt == 2:
+                    raise
+                time.sleep(0.2 * (attempt + 1))
     return {"removed": len(doomed), "kept": len(items) - len(doomed),
             "types": sorted({getattr(i, "type", "?") for i in items if i.id in doomed}),
             "seconds": time.perf_counter() - started}

@@ -480,3 +480,21 @@ def test_a_reply_that_states_a_price_is_replaced(client, monkeypatch):
         assert main.guard_reply(fine) == (fine, None)
     assert main.guard_reply("इसकी कीमत 500 रुपये है")[1] == "price"
     assert main.guard_reply("It costs Rs. 450 a square foot")[1] == "price"
+
+
+def test_trim_deletes_one_at_a_time_and_retries_a_412(client, monkeypatch):
+    import openai
+    items = [NS(id="a", type="file_search_call"), NS(id="b", type="message")]
+    tries = []
+
+    def delete(item_id, conversation_id):
+        tries.append(item_id)
+        if len(tries) == 1:
+            raise openai.APIStatusError("Error code: 412 - precondition_failed", response=httpx.Response(
+                412, request=httpx.Request("POST", "https://x")), body=None)
+
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: NS(conversations=NS(items=NS(
+        list=lambda cid, **kw: items, delete=delete))))
+    monkeypatch.setattr(foundry_agent.time, "sleep", lambda s: None)
+    r = client.post("/api/trim", json={"conversation_id": "conv_abc"})
+    assert r.status_code == 200 and r.json()["removed"] == 1 and tries == ["a", "a"]
