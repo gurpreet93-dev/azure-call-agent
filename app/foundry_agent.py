@@ -70,8 +70,11 @@ _limits_supported = True
 
 
 # Plain-text history shows earlier answers without the searches behind them, and the model copies that: it stopped
-# searching and answered "no confirmed information" (seen in traces). The reminder goes with every turn.
-SEARCH_REMINDER = ("Search the knowledge base for this turn before stating any product fact, even if an earlier "
+# searching and answered "no confirmed information" (seen in traces). The reminder goes with every turn, after the
+# caller's message: placed before it, gpt-4.1 still skipped searches once old results were deleted. Foundry's own
+# File search note sits after the message, and that agent searched on every turn.
+SEARCH_REMINDER = ("Search the knowledge base for the caller's message above before stating any product fact, "
+                   "even if an earlier "
                    "answer in this conversation covers it. Earlier answers are not search results. Only when the "
                    "caller asks you to repeat, repeat your last answer exactly, without searching.")
 
@@ -105,7 +108,7 @@ _system_note_supported = True
 def _text_history_input(history: list[dict], text: str) -> list[dict]:
     earlier = [_message(m["role"], m["content"]) for m in history]
     if _system_note_supported:
-        return earlier + [_message("system", SEARCH_REMINDER), _message("user", text)]
+        return earlier + [_message("user", text), _message("system", SEARCH_REMINDER)]
     # The plain shape that the agent service accepted before the system note was added.
     return [{"role": m["role"], "content": m["content"]} for m in history] + \
            [{"role": "user", "content": f"{text}\n\n({SEARCH_REMINDER})"}]

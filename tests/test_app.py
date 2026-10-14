@@ -79,8 +79,8 @@ def test_agent_is_called_by_name_with_server_side_conversation(monkeypatch):
     assert foundry_agent.new_conversation() == "conv_9"
     assert foundry_agent.ask("conv_9", "hi").text == "Hello there."
     assert sent == {"conversation": "conv_9",
-                    "input": [{"type": "message", "role": "system", "content": foundry_agent.SEARCH_REMINDER},
-                              {"type": "message", "role": "user", "content": "hi"}],
+                    "input": [{"type": "message", "role": "user", "content": "hi"},
+                              {"type": "message", "role": "system", "content": foundry_agent.SEARCH_REMINDER}],
                     "extra_body": {"agent_reference": {"name": "clearview-glass-agent", "type": "agent_reference"}},
                     "max_output_tokens": 400, "max_tool_calls": 2, "truncation": "auto"}
 
@@ -341,8 +341,8 @@ def test_text_history_sends_only_what_was_said_and_no_stored_conversation(client
     assert r.json()["tokens"] == {"input": 1200, "cached": 900}
     assert "conversation" not in sent
     as_items = [{"type": "message", **m} for m in history]
-    assert sent["input"] == as_items + [{"type": "message", "role": "system", "content": foundry_agent.SEARCH_REMINDER},
-                                        {"type": "message", "role": "user", "content": "And single glazed?"}]
+    assert sent["input"] == as_items + [{"type": "message", "role": "user", "content": "And single glazed?"},
+                                        {"type": "message", "role": "system", "content": foundry_agent.SEARCH_REMINDER}]
 
 
 def test_system_note_moves_into_the_turn_if_the_agent_service_refuses_it(monkeypatch):
@@ -544,8 +544,8 @@ def test_stored_turns_carry_the_reminder_and_report_the_search(monkeypatch):
     monkeypatch.setattr(foundry_agent, "_system_note_supported", True)
     a = foundry_agent.ask("conv_x", "Nano Silver Shine U-value?")
     assert a.searched is True and a.message_ids == ("msg_2",)
-    assert sent["conversation"] == "conv_x" and sent["input"][0]["role"] == "system"
-    assert sent["input"][-1] == {"type": "message", "role": "user", "content": "Nano Silver Shine U-value?"}
+    assert sent["conversation"] == "conv_x" and sent["input"][-1]["role"] == "system"
+    assert sent["input"][0] == {"type": "message", "role": "user", "content": "Nano Silver Shine U-value?"}
 
 
 def test_trim_also_removes_the_reminder(client, monkeypatch):
