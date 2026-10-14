@@ -89,7 +89,13 @@ const $ = (id) => document.getElementById(id);
 const SDK = window.SpeechSDK;                                   // Azure AI Speech (recognition)
 const ChromeSR = window.SpeechRecognition || window.webkitSpeechRecognition;   // fallback only
 let conversationId = null, busy = false, speaking = false, pending = null;
-let superseded = false;             // the caller said something new while the agent was working on the last turn
+let superseded = false;
+// The microphone must not keep listening after the call is over: it once picked up a whole work conversation in
+// the room after the caller said "thank you" and sent it to the agent. A goodbye ends the call, and so does a
+// minute with nobody speaking to the agent.
+const GOODBYE = /(thank you|thanks|thank u|bye|goodbye|that'?s all|धन्यवाद|शुक्रिया)[\s.!,।]*$/i;
+const IDLE_STOP_MS = 60000;
+let lastActivity = 0;             // the caller said something new while the agent was working on the last turn
 // Foundry's stored conversation (default): each call is one conversation, shown as one thread with its totals in
 // Foundry's Conversation view. It re-sends earlier search results every turn, so tokens grow with each question.
 // ?history=text keeps the history in the page as plain text instead (flat tokens, no Conversation view).
@@ -295,6 +301,7 @@ async function send(text, marks) {
     return;
   }
   busy = true; superseded = false;
+  const endsCall = GOODBYE.test(text);
   log('you', text);
   try {
     status('Thinking…');
@@ -332,6 +339,11 @@ async function send(text, marks) {
     }
     status(session ? 'Speaking… (just talk, or tap the mic, to interrupt)' : 'Speaking… (tap the mic to interrupt)');
     const res = await speak(reply, t);
+    lastActivity = now();
+    if (endsCall && session && !res.interrupted) {
+      stopSession();
+      log('sys', 'Call ended (you said goodbye). The microphone is off; tap it to start again.');
+    }
     const m = document.createElement('div'); m.className = 'meta';
     m.textContent = 'voice: ' + res.via + (res.interrupted ? ' · interrupted' : '');
     bubble.appendChild(m);
@@ -414,6 +426,7 @@ async function startSession() {
     // background, would make the wait look minutes long).
     const partial = lastPartialAt != null && heardAt - lastPartialAt < 10000 ? lastPartialAt : null;
     lastPartialAt = null;
+    lastActivity = heardAt;
     queueUtterance(t, speechEndTime(audioStart, e.result.offset, e.result.duration, heardAt), partial);
   };
   recognizer.canceled = (_, e) => {
@@ -425,7 +438,14 @@ async function startSession() {
   const refresh = setInterval(async () => {          // tokens last 10 minutes
     try { recognizer.authorizationToken = (await (await api('/api/speech-token', null, 'GET')).json()).token; } catch {}
   }, 8 * 60 * 1000);
-  session = {recognizer, stream, refresh};
+  lastActivity = now();
+  const idle = setInterval(() => {                    // nobody has spoken to the agent for a minute: stop listening
+    if (!busy && !speaking && now() - lastActivity > IDLE_STOP_MS) {
+      stopSession();
+      log('sys', 'Stopped listening after a minute of silence. Tap the microphone to talk again.');
+    }
+  }, 5000);
+  session = {recognizer, stream, refresh, idle};
   $('mic').classList.add('listening');
   status(busy ? 'Thinking…' : 'Listening… (tap the mic to stop)');
 }
@@ -433,7 +453,7 @@ function stopSession() {
   const s = session; session = null;
   $('mic').classList.remove('listening');
   if (!s) return;
-  clearInterval(s.refresh);
+  clearInterval(s.refresh); clearInterval(s.idle);
   s.recognizer.stopContinuousRecognitionAsync(() => s.recognizer.close(), () => s.recognizer.close());
   s.stream.getTracks().forEach(t => t.stop());
   if (!busy) status('Stopped. Tap the microphone to talk');
