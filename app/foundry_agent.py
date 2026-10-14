@@ -1,10 +1,11 @@
 """Talks to an agent defined in Microsoft Foundry (Foundry Agent Service, Responses API).
 
 Everything the agent knows and how it behaves (instructions, knowledge files, tools, model) is
-configured in Foundry. This module only creates a conversation and sends the user's words to the
-agent by name. Sign-in is Microsoft Entra ID: an existing `az login` if there is one, otherwise a
+configured in Foundry. This module sends the caller's words to the agent by name, with the conversation so far
+as plain text (see `ask`). Sign-in is Microsoft Entra ID: an existing `az login` if there is one, otherwise a
 browser window opens once to sign in (so nothing else needs installing on a local machine).
 """
+from dataclasses import dataclass
 from functools import lru_cache
 
 import openai
@@ -44,7 +45,7 @@ def _agent_ref() -> dict:
 
 
 def new_conversation() -> str:
-    """Foundry keeps the conversation history server-side; the browser only holds its id."""
+    """Only for the older "stored" mode: Foundry keeps the history server-side and the browser holds its id."""
     return _openai_client().conversations.create().id
 
 
@@ -54,17 +55,37 @@ LIMITS = {"max_output_tokens": settings.agent_max_output_tokens, "max_tool_calls
 _limits_supported = True
 
 
-def ask(conversation_id: str, text: str) -> str:
+@dataclass
+class Answer:
+    text: str
+    input_tokens: int | None = None
+    cached_tokens: int | None = None
+
+
+def _answer(response) -> Answer:
+    usage = getattr(response, "usage", None)
+    details = getattr(usage, "input_tokens_details", None)
+    return Answer((response.output_text or "").strip(), getattr(usage, "input_tokens", None),
+                  getattr(details, "cached_tokens", None))
+
+
+def ask(conversation_id: str | None, text: str, history: list[dict] | None = None) -> Answer:
+    """With `history` (the earlier turns as plain text, kept by the browser) the agent gets only what was said:
+    no stored conversation, so earlier search results are not sent again. A Foundry conversation re-sends every
+    earlier tool call with its full search output on each turn (2,745 input tokens on turn 1, 14,281 by turn 5).
+    The agent searches again when it needs a figure. Without `history`, the stored conversation is used."""
     global _limits_supported
+    if history is not None:
+        target = {"input": [{"role": m["role"], "content": m["content"]} for m in history] +
+                           [{"role": "user", "content": text}]}
+    else:
+        target = {"conversation": conversation_id, "input": text}
     client = _openai_client()
     if _limits_supported:
         try:
-            response = client.responses.create(conversation=conversation_id, input=text, extra_body=_agent_ref(),
-                                               **LIMITS)
-            return (response.output_text or "").strip()
+            return _answer(client.responses.create(**target, extra_body=_agent_ref(), **LIMITS))
         except openai.BadRequestError as exc:      # the agent service refused one of the limits: go without them
             if not any(k in str(exc) for k in LIMITS):
                 raise
             _limits_supported = False
-    response = client.responses.create(conversation=conversation_id, input=text, extra_body=_agent_ref())
-    return (response.output_text or "").strip()
+    return _answer(client.responses.create(**target, extra_body=_agent_ref()))

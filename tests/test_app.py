@@ -41,7 +41,7 @@ def test_page_has_mic_language_picker_and_text_box(client):
 def test_conversation_chat_and_speak_go_to_foundry_and_speech(client, monkeypatch):
     calls = []
     monkeypatch.setattr(foundry_agent, "new_conversation", lambda: "conv_123")
-    monkeypatch.setattr(foundry_agent, "ask", lambda cid, text: calls.append((cid, text)) or "Namaste! Kaise madad karun?")
+    monkeypatch.setattr(foundry_agent, "ask", lambda cid, text, history=None: calls.append((cid, text)) or foundry_agent.Answer("Namaste! Kaise madad karun?"))
     monkeypatch.setattr(speech, "synthesize_stream", fake_stream())
 
     cid = client.post("/api/conversation").json()["conversation_id"]
@@ -77,7 +77,7 @@ def test_agent_is_called_by_name_with_server_side_conversation(monkeypatch):
         foundry_agent_name="clearview-glass-agent"))
     monkeypatch.setattr(foundry_agent, "_openai_client", lambda: FakeOpenAI())
     assert foundry_agent.new_conversation() == "conv_9"
-    assert foundry_agent.ask("conv_9", "hi") == "Hello there."
+    assert foundry_agent.ask("conv_9", "hi").text == "Hello there."
     assert sent == {"conversation": "conv_9", "input": "hi",
                     "extra_body": {"agent_reference": {"name": "clearview-glass-agent", "type": "agent_reference"}},
                     "max_output_tokens": 400, "max_tool_calls": 2, "truncation": "auto"}
@@ -174,7 +174,7 @@ def test_speak_streams_with_timing_headers(client, monkeypatch):
 
 
 def test_chat_reports_llm_time(client, monkeypatch):
-    monkeypatch.setattr(foundry_agent, "ask", lambda cid, text: "Hi")
+    monkeypatch.setattr(foundry_agent, "ask", lambda cid, text, history=None: foundry_agent.Answer("Hi"))
     r = client.post("/api/chat", json={"conversation_id": "c", "text": "hi"})
     assert r.json()["reply"] == "Hi" and isinstance(r.json()["timing"]["llm_ms"], int)
     assert r.headers["server-timing"].startswith("llm;dur=")
@@ -267,7 +267,7 @@ def test_rate_limit_gives_a_plain_message(client, monkeypatch):
     import httpx
     import openai
 
-    def limited(cid, text):
+    def limited(*a):
         raise openai.RateLimitError("Error code: 429 - rate_limit_exceeded", response=httpx.Response(
             429, request=httpx.Request("POST", "https://x")), body=None)
     monkeypatch.setattr(foundry_agent, "ask", limited)
@@ -289,7 +289,7 @@ def test_limits_dropped_if_the_agent_service_refuses_them(monkeypatch):
 
     monkeypatch.setattr(foundry_agent, "_openai_client", lambda: NS(responses=NS(create=create)))
     monkeypatch.setattr(foundry_agent, "_limits_supported", True)
-    assert foundry_agent.ask("c", "hi") == "ok" and foundry_agent.ask("c", "again") == "ok"
+    assert foundry_agent.ask("c", "hi").text == "ok" and foundry_agent.ask("c", "again").text == "ok"
     assert [("max_output_tokens" in c) for c in calls] == [True, False, False]   # learns after the first refusal
     monkeypatch.setattr(foundry_agent, "_limits_supported", True)
 
@@ -318,9 +318,29 @@ def test_agent_client_fails_fast_instead_of_waiting_out_rate_limits(monkeypatch)
 def test_agent_timeout_is_a_readable_error(client, monkeypatch):
     import openai as oa
 
-    def slow(cid, text):
+    def slow(*a):
         raise oa.APITimeoutError(request=httpx.Request("POST", "https://x"))
 
     monkeypatch.setattr(foundry_agent, "ask", slow)
     r = client.post("/api/chat", json={"conversation_id": "c", "text": "hi"})
     assert r.status_code == 504 and "longer than" in r.json()["detail"]
+
+
+def test_text_history_sends_only_what_was_said_and_no_stored_conversation(client, monkeypatch):
+    sent = {}
+    usage = NS(input_tokens=1200, input_tokens_details=NS(cached_tokens=900))
+    fake = NS(responses=NS(create=lambda **kw: sent.update(kw) or NS(output_text="Yes, 1.8.", usage=usage)))
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: fake)
+    monkeypatch.setattr(foundry_agent, "_limits_supported", True)
+    history = [{"role": "user", "content": "U-value of Icy Menthol?"},
+               {"role": "assistant", "content": "1.8 for double glazing."}]
+    r = client.post("/api/chat", json={"history": history, "text": "And single glazed?"})
+    assert r.status_code == 200 and r.json()["reply"] == "Yes, 1.8."
+    assert r.json()["tokens"] == {"input": 1200, "cached": 900}
+    assert "conversation" not in sent
+    assert sent["input"] == history + [{"role": "user", "content": "And single glazed?"}]
+
+
+def test_chat_needs_history_or_a_conversation(client):
+    assert client.post("/api/chat", json={"text": "hi"}).status_code == 422
+    assert client.post("/api/chat", json={"history": [{"role": "system", "content": "x"}], "text": "hi"}).status_code == 422

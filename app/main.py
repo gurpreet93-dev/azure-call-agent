@@ -10,7 +10,9 @@ import openai
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, Field, model_validator
 
 from app import foundry_agent, speech
 from app.config import settings
@@ -39,9 +41,21 @@ async def require_password(request: Request, call_next):
     return await call_next(request)
 
 
+class Turn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=4000)
+
+
 class ChatIn(BaseModel):
-    conversation_id: str = Field(min_length=1, max_length=200)
     text: str = Field(min_length=1, max_length=4000)
+    history: list[Turn] | None = Field(default=None, max_length=100)   # text-only history (the default)
+    conversation_id: str | None = Field(default=None, min_length=1, max_length=200)   # stored Foundry history
+
+    @model_validator(mode="after")
+    def one_kind_of_history(self):
+        if self.history is None and not self.conversation_id:
+            raise ValueError("send either history (may be empty) or conversation_id")
+        return self
 
 
 class SpeakIn(BaseModel):
@@ -85,10 +99,13 @@ def server_timing(**parts: float) -> str:
 def chat(body: ChatIn):
     started = time.perf_counter()
     try:
-        reply = foundry_agent.ask(body.conversation_id, body.text)
+        history = None if body.history is None else [t.model_dump() for t in body.history]
+        answer = foundry_agent.ask(body.conversation_id, body.text, history)
         llm = time.perf_counter() - started
-        log.info("timing llm=%.0fms chars=%d", llm * 1000, len(reply))
-        return JSONResponse({"reply": reply, "timing": {"llm_ms": round(llm * 1000)}},
+        log.info("timing llm=%.0fms chars=%d history=%s input_tokens=%s cached=%s", llm * 1000, len(answer.text),
+                 "stored" if history is None else f"text:{len(history)}", answer.input_tokens, answer.cached_tokens)
+        return JSONResponse({"reply": answer.text, "timing": {"llm_ms": round(llm * 1000)},
+                             "tokens": {"input": answer.input_tokens, "cached": answer.cached_tokens}},
                             headers={"Server-Timing": server_timing(llm=llm)})
     except openai.APITimeoutError as exc:
         log.warning("Foundry agent timed out after %ss", foundry_agent.AGENT_TIMEOUT_S)
