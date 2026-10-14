@@ -394,7 +394,7 @@ function holdForMore() { if (heardBuffer.length) clearTimeout(heardTimer); }
 // anything that still sounds like the reply is ignored by isEcho(). The caller's words interrupt the reply.
 let session = null;   // {recognizer, stream, refresh}
 const PHRASES = ['U-value', 'solar factor', 'light transmission', 'internal reflection', 'external reflection',
-  'single glazing', 'double glazing', 'double glazed unit', 'Saint-Gobain', 'ClearView', 'Planitherm', 'Cool-lite',
+  'single glazing', 'double glazing', 'double glazed unit', 'Saint-Gobain', 'ClearView', 'SGG', 'SGG Nano', 'Planitherm', 'Cool-lite',
   'Antelio Plus', 'Envision', 'Evolite', 'Evo Plus', 'Nano Silver', 'Nano Blue', 'Xtreme', 'Graphite',
   'Icy Menthol', 'Pristine White', 'Lumina', 'Blue Frost', 'Sparkling Ice', 'Planilaque', 'Mira'];
 async function startSession() {
