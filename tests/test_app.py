@@ -367,3 +367,21 @@ def test_system_note_moves_into_the_turn_if_the_agent_service_refuses_it(monkeyp
 def test_chat_needs_history_or_a_conversation(client):
     assert client.post("/api/chat", json={"text": "hi"}).status_code == 422
     assert client.post("/api/chat", json={"history": [{"role": "system", "content": "x"}], "text": "hi"}).status_code == 422
+
+
+def test_english_uses_ava_dragon_hd_and_falls_back_to_an_indian_english_voice(azure_tts, monkeypatch):
+    assert speech.voice_for("en-IN") == "en-US-Ava:DragonHDLatestNeural"
+    asked = []
+
+    def handler(request):
+        if request.url.path.endswith("/voices/list"):
+            return httpx.Response(200, json=[{"ShortName": "en-IN-NeerjaNeural", "Locale": "en-IN", "Gender": "Female"}])
+        voice = request.content.decode().split("<voice name=")[1].split(">")[0].strip("'\"")
+        asked.append(voice)
+        return httpx.Response(400 if "DragonHD" in voice else 200, content=b"ID3")
+
+    azure_tts(handler)
+    monkeypatch.setattr(speech, "_voice_list", None)
+    monkeypatch.setattr(speech, "_resolved", {})
+    stream = speech.synthesize_stream("Hello there", "en-IN")
+    assert stream.voice == "en-IN-NeerjaNeural" and asked == ["en-US-Ava:DragonHDLatestNeural", "en-IN-NeerjaNeural"]

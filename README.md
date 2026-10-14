@@ -171,7 +171,7 @@ The server keeps one HTTP connection to Azure Speech open between replies and pa
 - **Languages.** Azure Speech recognition detects the language as you talk, choosing between the picked
   language, Indian English and Hindi; the picker follows what it hears and what the agent replies in.
 - **If Azure Speech fails**, the browser speaks the reply with its own voice and the reply bubble says so.
-- **Voices.** Each language has a native Azure voice (Hindi: `hi-IN-SwaraNeural`, Indian English: `en-IN-NeerjaNeural`,
+- **Voices.** Each language has a native Azure voice (Hindi: `hi-IN-SwaraNeural`, Indian English: `en-US-Ava:DragonHDLatestNeural`, the HD voice used in the Foundry playground, falling back to `en-IN-NeerjaNeural`,
   …; table in `app/speech.py`, override with `SPEECH_VOICES`). Markdown and citation marks are stripped before speaking.
 - **Interrupting.** One recognition session runs for the whole conversation, on a microphone stream with echo
   cancellation. Talking over a reply stops it and your sentence is sent; heard words that match the reply being

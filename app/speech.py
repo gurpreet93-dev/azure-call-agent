@@ -20,7 +20,8 @@ OUTPUT_FORMAT = "audio-24khz-48kbitrate-mono-mp3"
 # Native Azure neural voices per language in the picker. Override any with
 # SPEECH_VOICES="hi-IN=hi-IN-MadhurNeural,pa-IN=pa-IN-OjasNeural".
 NATIVE_VOICES = {
-    "en-IN": "en-IN-NeerjaNeural",
+    # Ava Dragon HD, the voice set in the Foundry playground. If this region rejects it, an en-IN voice is found below.
+    "en-IN": "en-US-Ava:DragonHDLatestNeural",
     "hi-IN": "hi-IN-SwaraNeural",
     "bn-IN": "bn-IN-TanishaaNeural",
     "gu-IN": "gu-IN-DhwaniNeural",
