@@ -328,15 +328,25 @@ function interrupt() { if (speaking && finishSpeaking) finishSpeaking(true); }
 // Timing of the caller's side: lastWords = last partial result (≈ when they stopped talking, a little after),
 // recognized = Azure decided the sentence was over. The send then waits MERGE_MS for a follow-on sentence.
 // Azure has already waited for ~0.5 s of silence before "recognized", so a short extra wait is enough.
-const MERGE_MS = 600;
+const MERGE_MS = 1000;
+const MERGE_MS_DIGITS = 1800;     // numbers are read out in groups ("946599 ... 2500"), with longer pauses
 let heardBuffer = [], heardTimer = null, lastPartialAt = null;
 function queueUtterance(t, speechEnd, lastWords) {
   heardBuffer.push(t);
   const marks = {lastWords: lastWords == null ? null : lastWords, recognized: now(),
                  speechEnd: speechEnd == null ? null : speechEnd};
-  clearTimeout(heardTimer);
-  heardTimer = setTimeout(() => { const all = heardBuffer.join(' '); heardBuffer = []; send(all, marks); }, MERGE_MS);
+  pendingMarks = marks;
+  sendSoon();
 }
+let pendingMarks = null;
+function sendSoon() {
+  clearTimeout(heardTimer);
+  if (!heardBuffer.length) return;
+  const wait = /\d[\s.,]*$/.test(heardBuffer.at(-1)) ? MERGE_MS_DIGITS : MERGE_MS;
+  heardTimer = setTimeout(() => { const all = heardBuffer.join(' '); heardBuffer = []; send(all, pendingMarks); }, wait);
+}
+// The caller started talking again during the wait: hold the words until that sentence is recognised too.
+function holdForMore() { if (heardBuffer.length) clearTimeout(heardTimer); }
 
 // ---------- listening: one continuous Azure Speech session for the whole call ----------
 // The mic stream has echo cancellation on, so the agent's own voice is mostly removed before recognition;
@@ -361,13 +371,13 @@ async function startSession() {
   } catch {}
   recognizer.recognizing = (_, e) => {
     const t = e.result.text || '';
-    if (t && !(speaking && isEcho(t))) lastPartialAt = now();
+    if (t && !(speaking && isEcho(t))) { lastPartialAt = now(); holdForMore(); }
     if (speaking && $('bargein').checked && words(t).length >= 2 && !isEcho(t)) interrupt();
   };
   let audioStart = null;                               // page time of the session's first audio sample
   recognizer.recognized = (_, e) => {
     const heardAt = now();
-    if (e.result.reason !== SDK.ResultReason.RecognizedSpeech) return;
+    if (e.result.reason !== SDK.ResultReason.RecognizedSpeech) { sendSoon(); return; }   // noise: send what's held
     const t = (e.result.text || '').trim();
     if (!t || (speaking && isEcho(t))) return;
     if (speaking) interrupt();
