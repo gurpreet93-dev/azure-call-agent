@@ -26,6 +26,7 @@
   #log { margin: 16px 0; display:flex; flex-direction:column; gap:10px; min-height: 160px; }
   .msg { padding: 10px 12px; border-radius: 10px; max-width: 85%; white-space: pre-wrap; }
   .you { background: var(--you); align-self: flex-end; }
+  .you.live { opacity: .6; font-style: italic; }
   .agent { background: var(--agent); align-self: flex-start; }
   .sys { color: var(--muted); font-size: 13px; align-self: center; text-align:center; }
   .sys.err { color: var(--err); }
@@ -159,6 +160,7 @@ function setLanguage(lang, why) {
   const sel = $('lang');
   if (!lang || lang === sel.value || ![...sel.options].some(o => o.value === lang)) return;
   sel.value = lang;
+  prefetchFiller(lang);
   log('sys', 'Language: ' + sel.selectedOptions[0].text + ' (' + why + ').');
   restartListening();
 }
@@ -304,25 +306,79 @@ function speak(text, t = {}) {
   });
 }
 
+// ---------- a short line while the agent works ----------
+// A search turn takes the agent 2–5 s (once 25 s), which is dead air on a phone call. If no reply has come back
+// after FILLER_MS, Natasha says a short line, as Foundry's own voice mode does ("Let me take a quick look").
+// Replies without a search usually come back sooner, so lead-capture turns rarely get one. The audio is fetched
+// once per language and played from memory, so it starts at once instead of after a speech request.
+const FILLER_MS = 1500;
+const FILLERS = {en: ['One moment.', 'Let me check that.', 'Just a moment.'],
+                 hi: ['एक पल।', 'बस एक पल, मैं देख लेती हूँ।']};
+const fillerAudio = {};             // lang -> [{text, url}], or a Promise while loading
+let fillerTurn = 0;
+const fillerKey = (lang) => lang.startsWith('en') ? 'en' : lang === 'hi-IN' ? 'hi' : null;
+function prefetchFiller(lang) {
+  const key = fillerKey(lang);
+  if (!key || fillerAudio[lang]) return;
+  fillerAudio[lang] = Promise.all(FILLERS[key].map(async (text) =>
+      ({text, url: URL.createObjectURL(await (await api('/api/speak', {text, lang})).blob())})))
+    .then(list => { fillerAudio[lang] = list; }, () => { delete fillerAudio[lang]; });
+}
+// Plays one filler line; resolves when it ends or is cut off. Null when none is ready for this language.
+function playFiller() {
+  const lang = $('lang').value, list = fillerAudio[lang];
+  if (!Array.isArray(list)) { prefetchFiller(lang); return null; }
+  const {text, url} = list[fillerTurn++ % list.length];
+  speaking = true; replyWords = new Set(words(text));
+  return new Promise((resolve) => {
+    let done = false;
+    finishSpeaking = (interrupted) => {
+      if (done) return; done = true; speaking = false; finishSpeaking = null;
+      player.pause(); resolve({text, interrupted: !!interrupted});
+    };
+    const fin = finishSpeaking;
+    player.onplaying = null; player.src = url;
+    player.onended = () => fin(false); player.onerror = () => fin(false);
+    player.play().catch(() => fin(false));
+  });
+}
+
+// ---------- the caller's words on screen while they speak ----------
+// Azure finalises a sentence 1.4–2.2 s after the caller stops; until then the words show greyed out.
+let liveBubble = null;
+function showLive(partial) {
+  const text = [...heardBuffer, partial].filter(Boolean).join(' ');
+  if (!text) return clearLive();
+  if (!liveBubble) liveBubble = log('you live', text);
+  else liveBubble.textContent = text;
+}
+function clearLive() { if (liveBubble) liveBubble.remove(); liveBubble = null; }
+
 // ---------- one turn ----------
-async function send(text, marks) {
+async function send(text, marks, shown = false) {
   text = text.trim();
   if (!text) return;
+  clearLive();
   if (busy) {                                    // said while the agent was busy: send it next, and don't speak
     pending = pending ? pending + ' ' + text : text;   // the answer to what the caller has moved on from
+    log('you', text);                            // shown now; sent when the current turn is done
     superseded = true; interrupt();
     return;
   }
   busy = true; superseded = false;
   const endsCall = GOODBYE.test(text);
-  log('you', text);
+  if (!shown) log('you', text);
+  let filler = null, fillerTimer = null;
   try {
     status('Thinking…');
     const body = Object.assign(STORED_HISTORY ? {conversation_id: await ensureConversation(), text} : {history, text},
                                $('agent').value ? {agent: $('agent').value} : {});
     if (trimming) { await trimming; trimming = null; }   // the next turn must not carry the last turn's results
     const t = Object.assign({}, marks, {sent: now()});
+    if (!endsCall) fillerTimer = setTimeout(() => { if (!superseded) { filler = playFiller(); t.filler = now(); } },
+                                            FILLER_MS);
     const r = await api('/api/chat', body);
+    clearTimeout(fillerTimer);
     const data = await r.json();
     const reply = data.reply || '(no reply)';
     t.llmDone = now(); t.server = serverTiming(r); t.tokens = data.tokens;
@@ -352,6 +408,12 @@ async function send(text, marks) {
       return;
     }
     status(session ? 'Speaking… (just talk, or tap the mic, to interrupt)' : 'Speaking… (tap the mic to interrupt)');
+    const said = filler && await filler;          // let the short line finish rather than cut it mid-word
+    if (said && said.interrupted) {                // the caller spoke over it: they've moved on
+      const m = document.createElement('div'); m.className = 'meta';
+      m.textContent = 'not spoken: you spoke over "' + said.text + '"'; bubble.appendChild(m);
+      return;
+    }
     const res = await speak(reply, t);
     lastActivity = now();
     if (endsCall && session && !res.interrupted) {
@@ -359,7 +421,8 @@ async function send(text, marks) {
       log('sys', 'Call ended (you said goodbye). The microphone is off; tap it to start again.');
     }
     const m = document.createElement('div'); m.className = 'meta';
-    m.textContent = 'agent: ' + (data.agent || '?') + ' · voice: ' + res.via + (res.interrupted ? ' · interrupted' : '');
+    m.textContent = 'agent: ' + (data.agent || '?') + ' · voice: ' + res.via + (res.interrupted ? ' · interrupted' : '') +
+                    (said ? ' · said "' + said.text + '" at ' + ((t.filler - t.sent) / 1000).toFixed(1) + ' s' : '');
     bubble.appendChild(m);
     const tm = document.createElement('div'); tm.className = 'meta timing'; tm.textContent = timingText(t);
     bubble.appendChild(tm);
@@ -371,9 +434,10 @@ async function send(text, marks) {
   } catch (e) {
     log('sys err', e.message);
   } finally {
+    clearTimeout(fillerTimer);
     busy = false;
     status(session ? 'Listening… (tap the mic to stop)' : 'Tap the microphone and speak');
-    if (pending) { const t = pending; pending = null; send(t); }
+    if (pending) { const t = pending; pending = null; send(t, null, true); }
     else if (!session && fallbackOn) chromeListen();
   }
 }
@@ -426,7 +490,7 @@ async function startSession() {
   } catch {}
   recognizer.recognizing = (_, e) => {
     const t = e.result.text || '';
-    if (t && !(speaking && isEcho(t))) { lastPartialAt = now(); holdForMore(); }
+    if (t && !(speaking && isEcho(t))) { lastPartialAt = now(); holdForMore(); showLive(t); }
     if (speaking && $('bargein').checked && words(t).length >= 2 && !isEcho(t)) interrupt();
   };
   let audioStart = null;                               // page time of the session's first audio sample
@@ -434,7 +498,7 @@ async function startSession() {
     const heardAt = now();
     if (e.result.reason !== SDK.ResultReason.RecognizedSpeech) { sendSoon(); return; }   // noise: send what's held
     const t = (e.result.text || '').trim();
-    if (!t || (speaking && isEcho(t))) return;
+    if (!t || (speaking && isEcho(t))) { showLive(''); return; }
     if (speaking) interrupt();
     // Only a partial result from this sentence counts (an old one, e.g. from before the tab was in the
     // background, would make the wait look minutes long).
@@ -442,6 +506,7 @@ async function startSession() {
     lastPartialAt = null;
     lastActivity = heardAt;
     queueUtterance(t, speechEndTime(audioStart, e.result.offset, e.result.duration, heardAt), partial);
+    showLive('');
   };
   recognizer.canceled = (_, e) => {
     log('sys err', 'Speech recognition stopped: ' + (e.errorDetails || e.reason));
@@ -510,10 +575,12 @@ $('agent').onchange = () => {       // a new agent starts a new conversation, so
 };
 $('lang').onchange = () => {
   log('sys', 'Language: ' + $('lang').selectedOptions[0].text + '.');
+  prefetchFiller($('lang').value);
   restartListening();
 };
 if (!SDK) log('sys', 'Azure Speech SDK did not load; the browser\'s own recognition will be used (Chrome or Edge).');
 prepareConversation();
+prefetchFiller($('lang').value);
 </script>
 </body>
 </html>
