@@ -454,3 +454,18 @@ def test_trim_failure_is_reported_not_fatal(client, monkeypatch):
     monkeypatch.setattr(foundry_agent, "_openai_client", lambda: NS(conversations=NS(items=NS(list=boom))))
     r = client.post("/api/trim", json={"conversation_id": "conv_abc"})
     assert r.status_code == 502 and "delete not supported" in r.json()["detail"]
+
+
+def test_foundry_408_is_retried_once_when_starting_a_conversation(monkeypatch):
+    import openai
+    calls = []
+
+    def create():
+        calls.append(1)
+        if len(calls) == 1:
+            raise openai.APIStatusError("Error code: 408 - Timeout", response=httpx.Response(
+                408, request=httpx.Request("POST", "https://x")), body=None)
+        return NS(id="conv_ok")
+
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: NS(conversations=NS(create=create)))
+    assert foundry_agent.new_conversation() == "conv_ok" and len(calls) == 2

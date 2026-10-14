@@ -54,7 +54,14 @@ def _agent_ref(agent: str | None = None) -> dict:
 
 def new_conversation() -> str:
     """Only for the older "stored" mode: Foundry keeps the history server-side and the browser holds its id."""
-    return _openai_client().conversations.create().id
+    client = _openai_client()
+    try:
+        return client.conversations.create().id
+    except openai.APIStatusError as exc:           # Foundry times out now and then (408): one more try
+        if exc.status_code != 408:
+            raise
+        log.warning("Foundry conversation create timed out (408), retrying once")
+        return client.conversations.create().id
 
 
 # Azure counts each request against the tokens-per-minute limit as its input PLUS the most it may write, so an
@@ -101,6 +108,7 @@ def _text_history_input(history: list[dict], text: str) -> list[dict]:
 
 
 TOOL_RETRY_WITHIN_S = 20
+RETRY_STATUS = {408, 424}   # Foundry's own timeout, and its search tool's intermittent tool_server_error
 
 
 def _send(client, **kw):
@@ -110,9 +118,9 @@ def _send(client, **kw):
     try:
         return client.responses.create(**kw)
     except openai.APIStatusError as exc:
-        if exc.status_code != 424 or time.monotonic() - started > TOOL_RETRY_WITHIN_S:
+        if exc.status_code not in RETRY_STATUS or time.monotonic() - started > TOOL_RETRY_WITHIN_S:
             raise
-        log.warning("Foundry search tool failed (424), retrying once: %s", exc)
+        log.warning("Foundry failed (%s), retrying once: %s", exc.status_code, exc)
         return client.responses.create(**kw)
 
 
