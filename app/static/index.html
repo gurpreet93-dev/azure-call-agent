@@ -89,6 +89,7 @@ const $ = (id) => document.getElementById(id);
 const SDK = window.SpeechSDK;                                   // Azure AI Speech (recognition)
 const ChromeSR = window.SpeechRecognition || window.webkitSpeechRecognition;   // fallback only
 let conversationId = null, busy = false, speaking = false, pending = null;
+let superseded = false;             // the caller said something new while the agent was working on the last turn
 // Foundry's stored conversation (default): each call is one conversation, shown as one thread with its totals in
 // Foundry's Conversation view. It re-sends earlier search results every turn, so tokens grow with each question.
 // ?history=text keeps the history in the page as plain text instead (flat tokens, no Conversation view).
@@ -283,8 +284,12 @@ function speak(text, t = {}) {
 async function send(text, marks) {
   text = text.trim();
   if (!text) return;
-  if (busy) { pending = text; return; }          // said while the agent was thinking: send it next
-  busy = true;
+  if (busy) {                                    // said while the agent was busy: send it next, and don't speak
+    pending = pending ? pending + ' ' + text : text;   // the answer to what the caller has moved on from
+    superseded = true; interrupt();
+    return;
+  }
+  busy = true; superseded = false;
   log('you', text);
   try {
     status('Thinking…');
@@ -301,6 +306,11 @@ async function send(text, marks) {
       history = history.slice(-MAX_HISTORY);
     }
     const bubble = log('agent', spoken);
+    if (superseded) {                              // the caller moved on while this was being prepared
+      const m = document.createElement('div'); m.className = 'meta';
+      m.textContent = 'not spoken: you asked something new'; bubble.appendChild(m);
+      return;
+    }
     status(session ? 'Speaking… (just talk, or tap the mic, to interrupt)' : 'Speaking… (tap the mic to interrupt)');
     const res = await speak(reply, t);
     const m = document.createElement('div'); m.className = 'meta';
