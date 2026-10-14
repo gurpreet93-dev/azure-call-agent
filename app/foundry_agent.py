@@ -7,6 +7,7 @@ browser window opens once to sign in (so nothing else needs installing on a loca
 """
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -144,3 +145,20 @@ def ask(conversation_id: str | None, text: str, history: list[dict] | None = Non
             raise
         _system_note_supported = False
         return _answer(_create(client, {"input": _text_history_input(history, text)}, agent))
+
+
+def trim_search_results(conversation_id: str) -> dict:
+    """Deletes the search calls and their results from a stored conversation, keeping the questions and answers.
+
+    Foundry re-sends every item of a conversation on each turn, so search results from earlier turns made each
+    question cost about 2,900 more input tokens than the one before. Each turn's trace still records the results
+    it used; only the copy in the conversation goes. Runs while the reply plays, so the caller doesn't wait."""
+    started = time.perf_counter()
+    client = _openai_client()
+    items = list(client.conversations.items.list(conversation_id, limit=100, order="desc"))
+    doomed = [i.id for i in items if getattr(i, "type", "message") != "message"]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(lambda item_id: client.conversations.items.delete(item_id, conversation_id=conversation_id),
+                      doomed))
+    return {"removed": len(doomed), "kept": len(items) - len(doomed),
+            "types": sorted({getattr(i, "type", "?") for i in items}), "seconds": time.perf_counter() - started}

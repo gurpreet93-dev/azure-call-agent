@@ -93,7 +93,12 @@ let superseded = false;             // the caller said something new while the a
 // Foundry's stored conversation (default): each call is one conversation, shown as one thread with its totals in
 // Foundry's Conversation view. It re-sends earlier search results every turn, so tokens grow with each question.
 // ?history=text keeps the history in the page as plain text instead (flat tokens, no Conversation view).
-const STORED_HISTORY = new URLSearchParams(location.search).get('history') !== 'text';
+const HISTORY_MODE = new URLSearchParams(location.search).get('history') || 'stored';
+const STORED_HISTORY = HISTORY_MODE !== 'text';
+// Stored conversation with each turn's search results removed once it's answered (default): one Foundry thread
+// per call and flat tokens. ?history=stored-full keeps them (tokens grow ~2,900 a searching turn).
+const TRIM_SEARCH = STORED_HISTORY && HISTORY_MODE !== 'stored-full';
+let trimming = null;                // the clean-up of the last turn, done while its answer plays
 const MAX_HISTORY = 80;             // messages (40 exchanges): enough for a full lead capture with read-backs
 let history = [];
 let finishSpeaking = null;          // ends the reply that is playing; true = interrupted
@@ -166,7 +171,7 @@ function timingText(t) {
     ', first audio ' + after('firstChunk') + azure + ', playing ' + after('playing') +
     (t.mode ? ' · ' + t.mode : '') +
     (t.tokens && t.tokens.input != null ? ' · ' + t.tokens.input + ' tokens in' +
-      (t.tokens.cached ? ' (' + t.tokens.cached + ' cached)' : '') + ', ' + (STORED_HISTORY ? 'stored' : 'text') + ' history' : '') +
+      (t.tokens.cached ? ' (' + t.tokens.cached + ' cached)' : '') + ', ' + (TRIM_SEARCH ? 'stored history, search results removed' : STORED_HISTORY ? 'stored history' : 'text history') : '') +
     (stopped != null && t.playing != null ? ' · TOTAL you stopped → voice ' + s(t.playing - stopped) : '');
 }
 // When the caller actually stopped talking: the end of their speech in Azure's audio timeline when available,
@@ -295,6 +300,7 @@ async function send(text, marks) {
     status('Thinking…');
     const body = Object.assign(STORED_HISTORY ? {conversation_id: await ensureConversation(), text} : {history, text},
                                $('agent').value ? {agent: $('agent').value} : {});
+    if (trimming) { await trimming; trimming = null; }   // the next turn must not carry the last turn's results
     const t = Object.assign({}, marks, {sent: now()});
     const r = await api('/api/chat', body);
     const data = await r.json();
@@ -306,6 +312,14 @@ async function send(text, marks) {
       history = history.slice(-MAX_HISTORY);
     }
     const bubble = log('agent', spoken);
+    if (TRIM_SEARCH && body.conversation_id) {
+      trimming = api('/api/trim', {conversation_id: body.conversation_id}).then(r => r.json()).then(d => {
+        const m = document.createElement('div'); m.className = 'meta';
+        m.textContent = 'search results removed from the conversation: ' + d.removed + ' item(s), ' +
+                        (d.ms / 1000).toFixed(2) + ' s (kept ' + d.kept + ': ' + d.types.join(', ') + ')';
+        bubble.appendChild(m);
+      }).catch(e => log('sys err', 'Search results not removed (tokens will grow this call): ' + e.message));
+    }
     if (superseded) {                              // the caller moved on while this was being prepared
       const m = document.createElement('div'); m.className = 'meta';
       m.textContent = 'not spoken: you asked something new'; bubble.appendChild(m);

@@ -432,3 +432,25 @@ def test_page_can_pick_the_file_search_agent_and_nothing_else(client, monkeypatc
     client.post("/api/chat", json={"conversation_id": "c", "text": "hi"})
     assert sent[-1]["extra_body"]["agent_reference"]["name"] == "clearview-glass-agent"
     assert client.post("/api/chat", json={"conversation_id": "c", "text": "hi", "agent": "someone-else"}).status_code == 400
+
+
+def test_trim_deletes_search_items_and_keeps_the_conversation_text(client, monkeypatch):
+    items = [NS(id="msg_3", type="message"), NS(id="ais_2", type="azure_ai_search_call"),
+             NS(id="out_2", type="function_call_output"), NS(id="msg_1", type="message")]
+    deleted = []
+    fake = NS(conversations=NS(items=NS(
+        list=lambda cid, **kw: items if cid == "conv_abc" else [],
+        delete=lambda item_id, conversation_id: deleted.append((conversation_id, item_id)))))
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: fake)
+    r = client.post("/api/trim", json={"conversation_id": "conv_abc"})
+    assert r.status_code == 200 and r.json()["removed"] == 2 and r.json()["kept"] == 2
+    assert sorted(deleted) == [("conv_abc", "ais_2"), ("conv_abc", "out_2")]
+    assert client.post("/api/trim", json={"conversation_id": "../etc"}).status_code == 422
+
+
+def test_trim_failure_is_reported_not_fatal(client, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("delete not supported")
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: NS(conversations=NS(items=NS(list=boom))))
+    r = client.post("/api/trim", json={"conversation_id": "conv_abc"})
+    assert r.status_code == 502 and "delete not supported" in r.json()["detail"]

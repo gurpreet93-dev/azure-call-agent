@@ -96,6 +96,24 @@ def server_timing(**parts: float) -> str:
     return ", ".join(f"{name};dur={secs * 1000:.0f}" for name, secs in parts.items() if secs is not None)
 
 
+class TrimIn(BaseModel):
+    conversation_id: str = Field(pattern=r"^conv_[A-Za-z0-9_-]{1,200}$")
+
+
+@app.post("/api/trim")
+def trim(body: TrimIn):
+    """Removes the finished turn's search results from the stored conversation (see foundry_agent)."""
+    try:
+        done = foundry_agent.trim_search_results(body.conversation_id)
+    except Exception as exc:
+        log.warning("Could not remove search results from %s: %s", body.conversation_id, exc)
+        raise HTTPException(502, f"Couldn't remove the search results: {exc}") from exc
+    log.info("trim removed=%d kept=%d types=%s %.0fms", done["removed"], done["kept"], done["types"],
+             done["seconds"] * 1000)
+    return {"removed": done["removed"], "kept": done["kept"], "types": done["types"],
+            "ms": round(done["seconds"] * 1000)}
+
+
 @app.post("/api/chat")
 def chat(body: ChatIn):
     if body.agent and body.agent not in foundry_agent.allowed_agents():
