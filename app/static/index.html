@@ -60,6 +60,11 @@
         <option value="ar-SA">العربية (Arabic)</option>
         <option value="zh-CN">中文 (Mandarin)</option>
       </select>
+      <label for="agent">Knowledge</label>
+      <select id="agent" title="Which Foundry agent answers: same prompt, different search tool">
+        <option value="clearview-glass-agent-filesearch" selected>File search</option>
+        <option value="">Azure AI Search</option>
+      </select>
       <label title="Listens while the agent talks and ignores its own voice by comparing words"><input type="checkbox" id="bargein" checked> Interrupt by speaking</label>
       <button id="reset">New conversation</button>
     </div>
@@ -283,7 +288,8 @@ async function send(text, marks) {
   log('you', text);
   try {
     status('Thinking…');
-    const body = STORED_HISTORY ? {conversation_id: await ensureConversation(), text} : {history, text};
+    const body = Object.assign(STORED_HISTORY ? {conversation_id: await ensureConversation(), text} : {history, text},
+                               $('agent').value ? {agent: $('agent').value} : {});
     const t = Object.assign({}, marks, {sent: now()});
     const r = await api('/api/chat', body);
     const data = await r.json();
@@ -425,6 +431,10 @@ $('mic').onclick = async () => {
 $('typeform').onsubmit = (ev) => { ev.preventDefault(); const t = $('typed').value; $('typed').value = ''; send(t); };
 $('reset').onclick = () => { conversationId = null; history = []; pending = null; interrupt(); $('log').innerHTML = '';
   log('sys', 'New conversation. The agent has forgotten the previous one.'); };
+$('agent').onchange = () => {       // a new agent starts a new conversation, so each Foundry thread has one agent
+  conversationId = null; history = []; pending = null; interrupt();
+  log('sys', 'Knowledge: ' + $('agent').selectedOptions[0].text + '. New conversation started.');
+};
 $('lang').onchange = () => {
   log('sys', 'Language: ' + $('lang').selectedOptions[0].text + '.');
   restartListening();

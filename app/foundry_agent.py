@@ -43,8 +43,12 @@ def _openai_client():
     return project.get_openai_client().with_options(timeout=AGENT_TIMEOUT_S, max_retries=0)
 
 
-def _agent_ref() -> dict:
-    return {"agent_reference": {"name": settings.foundry_agent_name, "type": "agent_reference"}}
+def allowed_agents() -> set[str]:
+    return {settings.foundry_agent_name, *(a.strip() for a in settings.other_agents.split(",") if a.strip())}
+
+
+def _agent_ref(agent: str | None = None) -> dict:
+    return {"agent_reference": {"name": agent or settings.foundry_agent_name, "type": "agent_reference"}}
 
 
 def new_conversation() -> str:
@@ -111,19 +115,20 @@ def _send(client, **kw):
         return client.responses.create(**kw)
 
 
-def _create(client, target: dict):
+def _create(client, target: dict, agent: str | None = None):
     global _limits_supported
     if _limits_supported:
         try:
-            return _send(client, **target, extra_body=_agent_ref(), **LIMITS)
+            return _send(client, **target, extra_body=_agent_ref(agent), **LIMITS)
         except openai.BadRequestError as exc:      # the agent service refused one of the limits: go without them
             if not any(k in str(exc) for k in LIMITS):
                 raise
             _limits_supported = False
-    return _send(client, **target, extra_body=_agent_ref())
+    return _send(client, **target, extra_body=_agent_ref(agent))
 
 
-def ask(conversation_id: str | None, text: str, history: list[dict] | None = None) -> Answer:
+def ask(conversation_id: str | None, text: str, history: list[dict] | None = None,
+        agent: str | None = None) -> Answer:
     """With `history` (the earlier turns as plain text, kept by the browser) the agent gets only what was said:
     no stored conversation, so earlier search results are not sent again. A Foundry conversation re-sends every
     earlier tool call with its full search output on each turn (2,745 input tokens on turn 1, 14,281 by turn 5).
@@ -131,11 +136,11 @@ def ask(conversation_id: str | None, text: str, history: list[dict] | None = Non
     global _system_note_supported
     client = _openai_client()
     if history is None:
-        return _answer(_create(client, {"conversation": conversation_id, "input": text}))
+        return _answer(_create(client, {"conversation": conversation_id, "input": text}, agent))
     try:
-        return _answer(_create(client, {"input": _text_history_input(history, text)}))
+        return _answer(_create(client, {"input": _text_history_input(history, text)}, agent))
     except openai.BadRequestError as exc:          # the agent service refused the system note: put it in the turn
         if not _system_note_supported or "input" not in str(exc):
             raise
         _system_note_supported = False
-        return _answer(_create(client, {"input": _text_history_input(history, text)}))
+        return _answer(_create(client, {"input": _text_history_input(history, text)}, agent))

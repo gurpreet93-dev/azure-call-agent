@@ -41,7 +41,7 @@ def test_page_has_mic_language_picker_and_text_box(client):
 def test_conversation_chat_and_speak_go_to_foundry_and_speech(client, monkeypatch):
     calls = []
     monkeypatch.setattr(foundry_agent, "new_conversation", lambda: "conv_123")
-    monkeypatch.setattr(foundry_agent, "ask", lambda cid, text, history=None: calls.append((cid, text)) or foundry_agent.Answer("Namaste! Kaise madad karun?"))
+    monkeypatch.setattr(foundry_agent, "ask", lambda cid, text, history=None, agent=None: calls.append((cid, text)) or foundry_agent.Answer("Namaste! Kaise madad karun?"))
     monkeypatch.setattr(speech, "synthesize_stream", fake_stream())
 
     cid = client.post("/api/conversation").json()["conversation_id"]
@@ -174,7 +174,7 @@ def test_speak_streams_with_timing_headers(client, monkeypatch):
 
 
 def test_chat_reports_llm_time(client, monkeypatch):
-    monkeypatch.setattr(foundry_agent, "ask", lambda cid, text, history=None: foundry_agent.Answer("Hi"))
+    monkeypatch.setattr(foundry_agent, "ask", lambda cid, text, history=None, agent=None: foundry_agent.Answer("Hi"))
     r = client.post("/api/chat", json={"conversation_id": "c", "text": "hi"})
     assert r.json()["reply"] == "Hi" and isinstance(r.json()["timing"]["llm_ms"], int)
     assert r.headers["server-timing"].startswith("llm;dur=")
@@ -267,7 +267,7 @@ def test_rate_limit_gives_a_plain_message(client, monkeypatch):
     import httpx
     import openai
 
-    def limited(*a):
+    def limited(*a, **k):
         raise openai.RateLimitError("Error code: 429 - rate_limit_exceeded", response=httpx.Response(
             429, request=httpx.Request("POST", "https://x")), body=None)
     monkeypatch.setattr(foundry_agent, "ask", limited)
@@ -318,7 +318,7 @@ def test_agent_client_fails_fast_instead_of_waiting_out_rate_limits(monkeypatch)
 def test_agent_timeout_is_a_readable_error(client, monkeypatch):
     import openai as oa
 
-    def slow(*a):
+    def slow(*a, **k):
         raise oa.APITimeoutError(request=httpx.Request("POST", "https://x"))
 
     monkeypatch.setattr(foundry_agent, "ask", slow)
@@ -416,3 +416,19 @@ def test_search_tool_424_is_retried_once(monkeypatch):
         foundry_agent.ask(None, "Graphite single?", [])
     assert len(calls) == 2
     assert foundry_agent.ask(None, "Graphite single?", []).text == "0.43" and len(calls) == 3
+
+
+def test_page_can_pick_the_file_search_agent_and_nothing_else(client, monkeypatch):
+    sent = []
+    fake = NS(responses=NS(create=lambda **kw: sent.append(kw) or NS(output_text="ok", usage=None)))
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: fake)
+    monkeypatch.setattr(foundry_agent, "_limits_supported", True)
+    monkeypatch.setattr(foundry_agent, "settings", dataclasses.replace(
+        foundry_agent.settings, foundry_agent_name="clearview-glass-agent",
+        other_agents="clearview-glass-agent-filesearch"))
+    r = client.post("/api/chat", json={"conversation_id": "c", "text": "hi", "agent": "clearview-glass-agent-filesearch"})
+    assert r.status_code == 200
+    assert sent[-1]["extra_body"]["agent_reference"]["name"] == "clearview-glass-agent-filesearch"
+    client.post("/api/chat", json={"conversation_id": "c", "text": "hi"})
+    assert sent[-1]["extra_body"]["agent_reference"]["name"] == "clearview-glass-agent"
+    assert client.post("/api/chat", json={"conversation_id": "c", "text": "hi", "agent": "someone-else"}).status_code == 400

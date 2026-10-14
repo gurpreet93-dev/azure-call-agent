@@ -50,6 +50,7 @@ class ChatIn(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
     history: list[Turn] | None = Field(default=None, max_length=100)   # text-only history (the default)
     conversation_id: str | None = Field(default=None, min_length=1, max_length=200)   # stored Foundry history
+    agent: str | None = Field(default=None, max_length=100)   # one of the allowed Foundry agents; none = the default
 
     @model_validator(mode="after")
     def one_kind_of_history(self):
@@ -97,10 +98,12 @@ def server_timing(**parts: float) -> str:
 
 @app.post("/api/chat")
 def chat(body: ChatIn):
+    if body.agent and body.agent not in foundry_agent.allowed_agents():
+        raise HTTPException(400, f"Unknown agent: {body.agent}")
     started = time.perf_counter()
     try:
         history = None if body.history is None else [t.model_dump() for t in body.history]
-        answer = foundry_agent.ask(body.conversation_id, body.text, history)
+        answer = foundry_agent.ask(body.conversation_id, body.text, history, agent=body.agent)
         llm = time.perf_counter() - started
         log.info("timing llm=%.0fms chars=%d history=%s input_tokens=%s cached=%s", llm * 1000, len(answer.text),
                  "stored" if history is None else f"text:{len(history)}", answer.input_tokens, answer.cached_tokens)
