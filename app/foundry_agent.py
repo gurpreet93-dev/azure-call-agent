@@ -61,7 +61,8 @@ _limits_supported = True
 # Plain-text history shows earlier answers without the searches behind them, and the model copies that: it stopped
 # searching and answered "no confirmed information" (seen in traces). The reminder goes with every turn.
 SEARCH_REMINDER = ("Search the knowledge base for this turn before stating any product fact, even if an earlier "
-                   "answer in this conversation covers it. Earlier answers are not search results.")
+                   "answer in this conversation covers it. Earlier answers are not search results. Only when the "
+                   "caller asks you to repeat, repeat your last answer exactly, without searching.")
 
 
 @dataclass
