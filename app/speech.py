@@ -60,6 +60,9 @@ SCRIPTS = [
 ]
 
 
+OWN_SCRIPT = {lang for _, lang in SCRIPTS} | {"mr-IN"}
+
+
 def language_of(text: str, picked: str | None) -> str | None:
     """The language a reply is actually written in, judged by its script. A Latin-script reply (English,
     Spanish, ...) keeps the picked language. Devanagari is Hindi unless Marathi was picked."""
@@ -73,11 +76,15 @@ def language_of(text: str, picked: str | None) -> str | None:
                 if lo <= cp <= hi:
                     counts[lang] = counts.get(lang, 0) + 1
                     break
+    # Latin script (or a stray word in another script): keep the picked language, unless that language is
+    # written in its own script (Hindi, Tamil, ...); then the reply is English and needs an English voice,
+    # or a Hindi voice reads "ST 136" as "sent 136".
+    latin = picked if picked not in OWN_SCRIPT else "en-IN"
     if not counts or not letters:
-        return picked
+        return latin
     lang, n = max(counts.items(), key=lambda kv: kv[1])
-    if n < 0.2 * letters:          # a stray word in another script: keep the picked language
-        return picked
+    if n < 0.2 * letters:
+        return latin
     if lang == "hi-IN" and picked == "mr-IN":
         return "mr-IN"
     return lang
@@ -89,6 +96,9 @@ def speakable(text: str) -> str:
     text = re.sub(r"(\*\*|__|\*|`|#+ )", "", text)                    # bold, italics, code, headings
     text = re.sub(r"(?m)^\s*(?:[-•]|\d+[.)])\s+", "", text)          # list markers at line start
     text = re.sub(r"【[^】]*】", "", text)                               # file-search citation marks
+    # Product codes letter by letter: "ST 136" -> "S T 136" (else "Saint 136"), "KS 138 II" -> "K S 138 two".
+    text = re.sub(r"\b([A-Z]{2,4})(?= ?\d)", lambda m: " ".join(m.group(1)), text)
+    text = re.sub(r"(?<=\d) II\b", " two", text)
     return re.sub(r"\s*\n+\s*", " ", text).strip()
 
 

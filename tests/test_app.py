@@ -385,3 +385,15 @@ def test_english_uses_ava_dragon_hd_and_falls_back_to_an_indian_english_voice(az
     monkeypatch.setattr(speech, "_resolved", {})
     stream = speech.synthesize_stream("Hello there", "en-IN")
     assert stream.voice == "en-IN-NeerjaNeural" and asked == ["en-US-Ava:DragonHDLatestNeural", "en-IN-NeerjaNeural"]
+
+
+def test_english_reply_gets_an_english_voice_even_when_hindi_is_picked():
+    reply = "The solar factor of Cool Lite Graphite (ST 136) as single glazing is 0.43."
+    assert speech.language_of(reply, "hi-IN") == "en-IN"
+    assert speech.language_of(reply, "es-ES") == "es-ES"          # a Latin-script language stays as picked
+    assert speech.language_of("यह ग्लास गर्मी रोकता है", "hi-IN") == "hi-IN"
+
+
+def test_product_codes_are_spoken_letter_by_letter():
+    assert speech.speakable("Graphite (ST 136) and Shine KS 138 II") == "Graphite (S T 136) and Shine K S 138 two"
+    assert speech.speakable("U-value 1.8 for PLT T") == "U-value 1.8 for PLT T"

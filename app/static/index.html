@@ -332,6 +332,10 @@ function queueUtterance(t, speechEnd, lastWords) {
 // anything that still sounds like the reply is ignored by isEcho(). The caller's words interrupt the reply.
 let session = null;   // {recognizer, stream, refresh}
 const MIN_WORDS_TO_SWITCH = 3;
+const PHRASES = ['U-value', 'solar factor', 'light transmission', 'internal reflection', 'external reflection',
+  'single glazing', 'double glazing', 'double glazed unit', 'Saint-Gobain', 'ClearView', 'Planitherm', 'Cool-lite',
+  'Antelio Plus', 'Envision', 'Evolite', 'Evo Plus', 'Nano Silver', 'Nano Blue', 'Xtreme', 'Graphite',
+  'Icy Menthol', 'Pristine White', 'Lumina', 'Blue Frost', 'Sparkling Ice', 'Planilaque', 'Mira'];
 function candidateLanguages() {
   return [...new Set([$('lang').value, 'en-IN', 'hi-IN'])];
 }
@@ -343,6 +347,9 @@ async function startSession() {
   cfg.setProperty(SDK.PropertyId.SpeechServiceConnection_LanguageIdMode, 'Continuous');
   const recognizer = SDK.SpeechRecognizer.FromConfig(cfg,
     SDK.AutoDetectSourceLanguageConfig.fromLanguages(candidateLanguages()), SDK.AudioConfig.fromStreamInput(stream));
+  try {   // words recognition should favour: product terms otherwise come back as "EU value", "cool light"
+    SDK.PhraseListGrammar.fromRecognizer(recognizer).addPhrases(PHRASES);
+  } catch {}
   recognizer.recognizing = (_, e) => {
     const t = e.result.text || '';
     if (t && !(speaking && isEcho(t))) lastPartialAt = now();
