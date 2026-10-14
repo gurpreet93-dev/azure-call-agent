@@ -2,6 +2,7 @@
 import base64
 import binascii
 import logging
+import re
 import secrets
 import time
 from pathlib import Path
@@ -96,6 +97,22 @@ def server_timing(**parts: float) -> str:
     return ", ".join(f"{name};dur={secs * 1000:.0f}" for name, secs in parts.items() if secs is not None)
 
 
+# Prices come only from a specialist. The model once read a table's light-transmission column (24, 31, 37) as
+# prices "₹24, ₹31, ₹37", so a reply that states an amount of money is replaced in code, not left to the prompt.
+PRICE = re.compile(r"(₹\s?\d|\bRs\.?\s?\d|\bINR\s?\d|\$\s?\d|\d[\d,.]*\s?(rupees?|रुपये|रुपए)|"
+                   r"\b(rupees?|रुपये|रुपए)\s?\d)", re.IGNORECASE)
+PRICE_REPLY = {"hi-IN": "कीमत की जानकारी हमारे विशेषज्ञ देंगे। क्या मैं आपके लिए कॉल बैक की व्यवस्था करूँ?",
+               None: "Our specialist will share the pricing with you. Shall I arrange a call back?"}
+
+
+def guard_reply(text: str) -> tuple[str, str | None]:
+    """Returns the reply to show and speak, and why it was replaced (None = unchanged)."""
+    if PRICE.search(text):
+        lang = speech.language_of(text, None)
+        return PRICE_REPLY.get(lang, PRICE_REPLY[None]), "price"
+    return text, None
+
+
 class TrimIn(BaseModel):
     conversation_id: str = Field(pattern=r"^conv_[A-Za-z0-9_-]{1,200}$")
 
@@ -125,7 +142,10 @@ def chat(body: ChatIn):
         llm = time.perf_counter() - started
         log.info("timing llm=%.0fms chars=%d history=%s input_tokens=%s cached=%s", llm * 1000, len(answer.text),
                  "stored" if history is None else f"text:{len(history)}", answer.input_tokens, answer.cached_tokens)
-        return JSONResponse({"reply": answer.text, "timing": {"llm_ms": round(llm * 1000)},
+        reply, guarded = guard_reply(answer.text)
+        if guarded:
+            log.warning("reply replaced (%s): %r", guarded, answer.text[:300])
+        return JSONResponse({"reply": reply, "guarded": guarded, "timing": {"llm_ms": round(llm * 1000)},
                              "tokens": {"input": answer.input_tokens, "cached": answer.cached_tokens}},
                             headers={"Server-Timing": server_timing(llm=llm)})
     except openai.APITimeoutError as exc:

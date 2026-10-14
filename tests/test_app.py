@@ -469,3 +469,14 @@ def test_foundry_408_is_retried_once_when_starting_a_conversation(monkeypatch):
 
     monkeypatch.setattr(foundry_agent, "_openai_client", lambda: NS(conversations=NS(create=create)))
     assert foundry_agent.new_conversation() == "conv_ok" and len(calls) == 2
+
+
+def test_a_reply_that_states_a_price_is_replaced(client, monkeypatch):
+    made_up = "Twilight Blue (KT 740) at ₹24 per unit area, Misty Blue at ₹31. Twilight Blue is the cheapest."
+    monkeypatch.setattr(foundry_agent, "ask", lambda *a, **k: foundry_agent.Answer(made_up))
+    r = client.post("/api/chat", json={"conversation_id": "c", "text": "cheapest?"}).json()
+    assert r["guarded"] == "price" and "₹" not in r["reply"] and "call back" in r["reply"]
+    for fine in ["The U-value is 1.8.", "Light transmission is 60%.", "Call 1800 1021 215", "KT 740 is a shade."]:
+        assert main.guard_reply(fine) == (fine, None)
+    assert main.guard_reply("इसकी कीमत 500 रुपये है")[1] == "price"
+    assert main.guard_reply("It costs Rs. 450 a square foot")[1] == "price"

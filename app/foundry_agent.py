@@ -169,4 +169,5 @@ def trim_search_results(conversation_id: str) -> dict:
         list(pool.map(lambda item_id: client.conversations.items.delete(item_id, conversation_id=conversation_id),
                       doomed))
     return {"removed": len(doomed), "kept": len(items) - len(doomed),
-            "types": sorted({getattr(i, "type", "?") for i in items}), "seconds": time.perf_counter() - started}
+            "types": sorted({getattr(i, "type", "?") for i in items if i.id in doomed}),
+            "seconds": time.perf_counter() - started}
