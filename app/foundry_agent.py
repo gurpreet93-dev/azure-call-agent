@@ -5,6 +5,8 @@ configured in Foundry. This module sends the caller's words to the agent by name
 as plain text (see `ask`). Sign-in is Microsoft Entra ID: an existing `az login` if there is one, otherwise a
 browser window opens once to sign in (so nothing else needs installing on a local machine).
 """
+import logging
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -16,6 +18,7 @@ from app.config import settings
 
 
 AGENT_TIMEOUT_S = 45
+log = logging.getLogger(__name__)
 
 
 class AgentNotConfigured(RuntimeError):
@@ -91,16 +94,32 @@ def _text_history_input(history: list[dict], text: str) -> list[dict]:
            [{"role": "user", "content": f"{text}\n\n({SEARCH_REMINDER})"}]
 
 
+TOOL_RETRY_WITHIN_S = 20
+
+
+def _send(client, **kw):
+    """One retry when Foundry's search tool fails with 424 tool_server_error, which is intermittent (the search
+    service itself answered in ~55 ms). Only when the failure came quickly, so a retry still fits the time limit."""
+    started = time.monotonic()
+    try:
+        return client.responses.create(**kw)
+    except openai.APIStatusError as exc:
+        if exc.status_code != 424 or time.monotonic() - started > TOOL_RETRY_WITHIN_S:
+            raise
+        log.warning("Foundry search tool failed (424), retrying once: %s", exc)
+        return client.responses.create(**kw)
+
+
 def _create(client, target: dict):
     global _limits_supported
     if _limits_supported:
         try:
-            return client.responses.create(**target, extra_body=_agent_ref(), **LIMITS)
+            return _send(client, **target, extra_body=_agent_ref(), **LIMITS)
         except openai.BadRequestError as exc:      # the agent service refused one of the limits: go without them
             if not any(k in str(exc) for k in LIMITS):
                 raise
             _limits_supported = False
-    return client.responses.create(**target, extra_body=_agent_ref())
+    return _send(client, **target, extra_body=_agent_ref())
 
 
 def ask(conversation_id: str | None, text: str, history: list[dict] | None = None) -> Answer:

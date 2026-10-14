@@ -397,3 +397,22 @@ def test_english_reply_gets_an_english_voice_even_when_hindi_is_picked():
 def test_product_codes_are_spoken_letter_by_letter():
     assert speech.speakable("Graphite (ST 136) and Shine KS 138 II") == "Graphite (S T 136) and Shine K S 138 two"
     assert speech.speakable("U-value 1.8 for PLT T") == "U-value 1.8 for PLT T"
+
+
+def test_search_tool_424_is_retried_once(monkeypatch):
+    import openai
+    calls = []
+
+    def create(**kw):
+        calls.append(kw)
+        if len(calls) < 3:
+            raise openai.APIStatusError("Error code: 424 - tool_server_error", response=httpx.Response(
+                424, request=httpx.Request("POST", "https://x")), body=None)
+        return NS(output_text="0.43", usage=None)
+
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: NS(responses=NS(create=create)))
+    monkeypatch.setattr(foundry_agent, "_limits_supported", True)
+    with pytest.raises(openai.APIStatusError):                 # fails twice in a row: no third try
+        foundry_agent.ask(None, "Graphite single?", [])
+    assert len(calls) == 2
+    assert foundry_agent.ask(None, "Graphite single?", []).text == "0.43" and len(calls) == 3

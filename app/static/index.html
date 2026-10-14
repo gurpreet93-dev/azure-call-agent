@@ -129,6 +129,10 @@ function setLanguage(lang, why) {
   if (!lang || lang === sel.value || ![...sel.options].some(o => o.value === lang)) return;
   sel.value = lang;
   log('sys', 'Language: ' + sel.selectedOptions[0].text + ' (' + why + ').');
+  restartListening();
+}
+function restartListening() {       // recognition listens in one language, so a new language needs a new session
+  if (session) { stopSession(); startSession().catch(e => log('sys err', e.message)); }
 }
 
 // ---------- timing: where the wait between "reply ready" and "voice starts" goes ----------
@@ -331,22 +335,20 @@ function queueUtterance(t, speechEnd, lastWords) {
 // The mic stream has echo cancellation on, so the agent's own voice is mostly removed before recognition;
 // anything that still sounds like the reply is ignored by isEcho(). The caller's words interrupt the reply.
 let session = null;   // {recognizer, stream, refresh}
-const MIN_WORDS_TO_SWITCH = 3;
 const PHRASES = ['U-value', 'solar factor', 'light transmission', 'internal reflection', 'external reflection',
   'single glazing', 'double glazing', 'double glazed unit', 'Saint-Gobain', 'ClearView', 'Planitherm', 'Cool-lite',
   'Antelio Plus', 'Envision', 'Evolite', 'Evo Plus', 'Nano Silver', 'Nano Blue', 'Xtreme', 'Graphite',
   'Icy Menthol', 'Pristine White', 'Lumina', 'Blue Frost', 'Sparkling Ice', 'Planilaque', 'Mira'];
-function candidateLanguages() {
-  return [...new Set([$('lang').value, 'en-IN', 'hi-IN'])];
-}
 async function startSession() {
   const {token, region} = await (await api('/api/speech-token', null, 'GET')).json();
   const stream = await navigator.mediaDevices.getUserMedia(
     {audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true}});
   const cfg = SDK.SpeechConfig.fromAuthorizationToken(token, region);
-  cfg.setProperty(SDK.PropertyId.SpeechServiceConnection_LanguageIdMode, 'Continuous');
-  const recognizer = SDK.SpeechRecognizer.FromConfig(cfg,
-    SDK.AutoDetectSourceLanguageConfig.fromLanguages(candidateLanguages()), SDK.AudioConfig.fromStreamInput(stream));
+  // Only the picked language. Detecting English vs Hindi by ear failed on Indian-accented English: "What's the
+  // solar..." came back as "वुड्स द सोलर" and switched the call to Hindi. The language changes when the caller
+  // picks another one, or when the agent replies in another language (e.g. to Hinglish typed in English letters).
+  cfg.speechRecognitionLanguage = $('lang').value;
+  const recognizer = new SDK.SpeechRecognizer(cfg, SDK.AudioConfig.fromStreamInput(stream));
   try {   // words recognition should favour: product terms otherwise come back as "EU value", "cool light"
     SDK.PhraseListGrammar.fromRecognizer(recognizer).addPhrases(PHRASES);
   } catch {}
@@ -361,10 +363,6 @@ async function startSession() {
     if (e.result.reason !== SDK.ResultReason.RecognizedSpeech) return;
     const t = (e.result.text || '').trim();
     if (!t || (speaking && isEcho(t))) return;
-    // Language detection is unreliable on a word or two ("Thank you", "No", "SGG Nano" often come back as
-    // Hindi), so only a sentence of 3+ words may switch the language.
-    if (words(t).length >= MIN_WORDS_TO_SWITCH)
-      try { setLanguage(SDK.AutoDetectSourceLanguageResult.fromResult(e.result).language, 'detected from your voice'); } catch {}
     if (speaking) interrupt();
     // Only a partial result from this sentence counts (an old one, e.g. from before the tab was in the
     // background, would make the wait look minutes long).
@@ -428,7 +426,7 @@ $('reset').onclick = () => { conversationId = null; history = []; pending = null
   log('sys', 'New conversation. The agent has forgotten the previous one.'); };
 $('lang').onchange = () => {
   log('sys', 'Language: ' + $('lang').selectedOptions[0].text + '.');
-  if (session) { stopSession(); startSession().catch(e => log('sys err', e.message)); }   // re-tune the language detector
+  restartListening();
 };
 if (!SDK) log('sys', 'Azure Speech SDK did not load; the browser\'s own recognition will be used (Chrome or Edge).');
 </script>
