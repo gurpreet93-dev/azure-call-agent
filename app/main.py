@@ -156,7 +156,7 @@ def chat(body: ChatIn):
     except openai.RateLimitError as exc:
         log.warning("gpt-4o rate limit: %s", exc)
         raise HTTPException(429, "The model is over its tokens-per-minute limit. Wait about a minute and try again, "
-                                 "or raise the gpt-4o deployment's rate limit in Foundry.") from exc
+                                 "or raise the model deployment's rate limit in Foundry.") from exc
     except Exception as exc:
         log.exception("Foundry agent call failed")
         raise HTTPException(502, f"The Foundry agent didn't answer: {exc}") from exc
