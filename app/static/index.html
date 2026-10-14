@@ -84,9 +84,10 @@ const $ = (id) => document.getElementById(id);
 const SDK = window.SpeechSDK;                                   // Azure AI Speech (recognition)
 const ChromeSR = window.SpeechRecognition || window.webkitSpeechRecognition;   // fallback only
 let conversationId = null, busy = false, speaking = false, pending = null;
-// Text-only history (default): the page keeps what was said and sends it each turn, so the agent never gets earlier
-// search results again. ?history=stored uses Foundry's stored conversation instead (to compare token counts).
-const STORED_HISTORY = new URLSearchParams(location.search).get('history') === 'stored';
+// Foundry's stored conversation (default): each call is one conversation, shown as one thread with its totals in
+// Foundry's Conversation view. It re-sends earlier search results every turn, so tokens grow with each question.
+// ?history=text keeps the history in the page as plain text instead (flat tokens, no Conversation view).
+const STORED_HISTORY = new URLSearchParams(location.search).get('history') !== 'text';
 const MAX_HISTORY = 80;             // messages (40 exchanges): enough for a full lead capture with read-backs
 let history = [];
 let finishSpeaking = null;          // ends the reply that is playing; true = interrupted
