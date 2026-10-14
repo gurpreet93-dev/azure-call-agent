@@ -111,7 +111,23 @@ def _send(client, **kw):
         return client.responses.create(**kw)
 
 
+_metadata_supported = True
+
+
 def _create(client, target: dict):
+    """Sends the call, with its call tag (metadata) while the agent service accepts one."""
+    global _metadata_supported
+    if "metadata" in target and _metadata_supported:
+        try:
+            return _create_plain(client, target)
+        except openai.BadRequestError as exc:      # the agent service refused the call tag: go without it
+            if "metadata" not in str(exc):
+                raise
+            _metadata_supported = False
+    return _create_plain(client, {k: v for k, v in target.items() if k != "metadata"})
+
+
+def _create_plain(client, target: dict):
     global _limits_supported
     if _limits_supported:
         try:
@@ -123,19 +139,23 @@ def _create(client, target: dict):
     return _send(client, **target, extra_body=_agent_ref())
 
 
-def ask(conversation_id: str | None, text: str, history: list[dict] | None = None) -> Answer:
+def ask(conversation_id: str | None, text: str, history: list[dict] | None = None,
+        call_id: str | None = None) -> Answer:
     """With `history` (the earlier turns as plain text, kept by the browser) the agent gets only what was said:
     no stored conversation, so earlier search results are not sent again. A Foundry conversation re-sends every
     earlier tool call with its full search output on each turn (2,745 input tokens on turn 1, 14,281 by turn 5).
     The agent searches again when it needs a figure. Without `history`, the stored conversation is used."""
     global _system_note_supported
     client = _openai_client()
+    # Every turn of one call carries the same tag, so its traces can be found together (text-only history has
+    # no Foundry conversation id to group them by).
+    tag = {"metadata": {"call_id": call_id}} if call_id else {}
     if history is None:
-        return _answer(_create(client, {"conversation": conversation_id, "input": text}))
+        return _answer(_create(client, {"conversation": conversation_id, "input": text, **tag}))
     try:
-        return _answer(_create(client, {"input": _text_history_input(history, text)}))
+        return _answer(_create(client, {"input": _text_history_input(history, text), **tag}))
     except openai.BadRequestError as exc:          # the agent service refused the system note: put it in the turn
-        if not _system_note_supported or "input" not in str(exc):
+        if not _system_note_supported or "metadata" in str(exc) or "input" not in str(exc):
             raise
         _system_note_supported = False
-        return _answer(_create(client, {"input": _text_history_input(history, text)}))
+        return _answer(_create(client, {"input": _text_history_input(history, text), **tag}))
