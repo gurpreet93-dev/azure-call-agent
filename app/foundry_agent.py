@@ -75,23 +75,47 @@ def _answer(response) -> Answer:
                   getattr(details, "cached_tokens", None))
 
 
+def _message(role: str, content: str) -> dict:
+    return {"type": "message", "role": role, "content": content}
+
+
+_system_note_supported = True
+
+
+def _text_history_input(history: list[dict], text: str) -> list[dict]:
+    earlier = [_message(m["role"], m["content"]) for m in history]
+    if _system_note_supported:
+        return earlier + [_message("system", SEARCH_REMINDER), _message("user", text)]
+    # The plain shape that the agent service accepted before the system note was added.
+    return [{"role": m["role"], "content": m["content"]} for m in history] + \
+           [{"role": "user", "content": f"{text}\n\n({SEARCH_REMINDER})"}]
+
+
+def _create(client, target: dict):
+    global _limits_supported
+    if _limits_supported:
+        try:
+            return client.responses.create(**target, extra_body=_agent_ref(), **LIMITS)
+        except openai.BadRequestError as exc:      # the agent service refused one of the limits: go without them
+            if not any(k in str(exc) for k in LIMITS):
+                raise
+            _limits_supported = False
+    return client.responses.create(**target, extra_body=_agent_ref())
+
+
 def ask(conversation_id: str | None, text: str, history: list[dict] | None = None) -> Answer:
     """With `history` (the earlier turns as plain text, kept by the browser) the agent gets only what was said:
     no stored conversation, so earlier search results are not sent again. A Foundry conversation re-sends every
     earlier tool call with its full search output on each turn (2,745 input tokens on turn 1, 14,281 by turn 5).
     The agent searches again when it needs a figure. Without `history`, the stored conversation is used."""
-    global _limits_supported
-    if history is not None:
-        target = {"input": [{"role": m["role"], "content": m["content"]} for m in history] +
-                           [{"role": "system", "content": SEARCH_REMINDER}, {"role": "user", "content": text}]}
-    else:
-        target = {"conversation": conversation_id, "input": text}
+    global _system_note_supported
     client = _openai_client()
-    if _limits_supported:
-        try:
-            return _answer(client.responses.create(**target, extra_body=_agent_ref(), **LIMITS))
-        except openai.BadRequestError as exc:      # the agent service refused one of the limits: go without them
-            if not any(k in str(exc) for k in LIMITS):
-                raise
-            _limits_supported = False
-    return _answer(client.responses.create(**target, extra_body=_agent_ref()))
+    if history is None:
+        return _answer(_create(client, {"conversation": conversation_id, "input": text}))
+    try:
+        return _answer(_create(client, {"input": _text_history_input(history, text)}))
+    except openai.BadRequestError as exc:          # the agent service refused the system note: put it in the turn
+        if not _system_note_supported or "input" not in str(exc):
+            raise
+        _system_note_supported = False
+        return _answer(_create(client, {"input": _text_history_input(history, text)}))

@@ -338,8 +338,30 @@ def test_text_history_sends_only_what_was_said_and_no_stored_conversation(client
     assert r.status_code == 200 and r.json()["reply"] == "Yes, 1.8."
     assert r.json()["tokens"] == {"input": 1200, "cached": 900}
     assert "conversation" not in sent
-    assert sent["input"] == history + [{"role": "system", "content": foundry_agent.SEARCH_REMINDER},
-                                       {"role": "user", "content": "And single glazed?"}]
+    as_items = [{"type": "message", **m} for m in history]
+    assert sent["input"] == as_items + [{"type": "message", "role": "system", "content": foundry_agent.SEARCH_REMINDER},
+                                        {"type": "message", "role": "user", "content": "And single glazed?"}]
+
+
+def test_system_note_moves_into_the_turn_if_the_agent_service_refuses_it(monkeypatch):
+    import openai
+    calls = []
+
+    def create(**kw):
+        calls.append(kw["input"])
+        if any(m["role"] == "system" for m in kw["input"]):
+            raise openai.BadRequestError("Error code: 400 - {'message': \"Invalid value: ''.\", 'param': 'input[1]'}", response=httpx.Response(
+                400, request=httpx.Request("POST", "https://x")), body={"param": "input[1]"})
+        return NS(output_text="0.43", usage=None)
+
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: NS(responses=NS(create=create)))
+    monkeypatch.setattr(foundry_agent, "_limits_supported", True)
+    monkeypatch.setattr(foundry_agent, "_system_note_supported", True)
+    assert foundry_agent.ask(None, "Graphite single?", []).text == "0.43"
+    assert foundry_agent.ask(None, "And double?", []).text == "0.43"
+    assert len(calls) == 3                                   # learns after the first refusal
+    assert calls[-1] == [{"role": "user",
+                          "content": "And double?\n\n(" + foundry_agent.SEARCH_REMINDER + ")"}]
 
 
 def test_chat_needs_history_or_a_conversation(client):
