@@ -81,13 +81,18 @@ class Answer:
     text: str
     input_tokens: int | None = None
     cached_tokens: int | None = None
+    searched: bool | None = None          # did this turn call a tool (a search)? None = unknown
+    message_ids: tuple[str, ...] = ()     # the reply's items, to take a blocked reply out of the conversation
 
 
 def _answer(response) -> Answer:
     usage = getattr(response, "usage", None)
     details = getattr(usage, "input_tokens_details", None)
+    output = getattr(response, "output", None)
+    searched = None if output is None else any(getattr(i, "type", "message") != "message" for i in output)
+    ids = tuple(i.id for i in (output or []) if getattr(i, "type", "") == "message" and getattr(i, "id", None))
     return Answer((response.output_text or "").strip(), getattr(usage, "input_tokens", None),
-                  getattr(details, "cached_tokens", None))
+                  getattr(details, "cached_tokens", None), searched, ids)
 
 
 def _message(role: str, content: str) -> dict:
@@ -143,15 +148,17 @@ def ask(conversation_id: str | None, text: str, history: list[dict] | None = Non
     The agent searches again when it needs a figure. Without `history`, the stored conversation is used."""
     global _system_note_supported
     client = _openai_client()
-    if history is None:
-        return _answer(_create(client, {"conversation": conversation_id, "input": text}, agent))
+    # The search reminder goes with every turn in both modes: without it gpt-4.1 answered "Nano Silver U-value 1.0"
+    # (it is 1.6) without searching. In a stored conversation trim_search_results() deletes it after the turn.
+    target = (lambda: {"conversation": conversation_id, "input": _text_history_input([], text)}) if history is None \
+        else (lambda: {"input": _text_history_input(history, text)})
     try:
-        return _answer(_create(client, {"input": _text_history_input(history, text)}, agent))
+        return _answer(_create(client, target(), agent))
     except openai.BadRequestError as exc:          # the agent service refused the system note: put it in the turn
         if not _system_note_supported or "input" not in str(exc):
             raise
         _system_note_supported = False
-        return _answer(_create(client, {"input": _text_history_input(history, text)}, agent))
+        return _answer(_create(client, target(), agent))
 
 
 TRIM_CALL_TIMEOUT_S = 3
@@ -169,7 +176,8 @@ def trim_search_results(conversation_id: str) -> dict:
     # whole clean-up stops after TRIM_BUDGET_S, leaving the rest (the next turn then carries a few extra tokens).
     client = _openai_client().with_options(timeout=TRIM_CALL_TIMEOUT_S, max_retries=0)
     items = list(client.conversations.items.list(conversation_id, limit=100, order="desc"))
-    doomed = [i.id for i in items if getattr(i, "type", "message") != "message"]
+    doomed = [i.id for i in items if getattr(i, "type", "message") != "message"
+              or getattr(i, "role", None) == "system"]          # search calls, results and the per-turn reminder
     removed = []
     # One at a time: Foundry refuses simultaneous changes to one conversation (412 "modified concurrently").
     for item_id in doomed:
@@ -192,3 +200,10 @@ def trim_search_results(conversation_id: str) -> dict:
     return {"removed": len(removed), "left": len(doomed) - len(removed), "kept": len(items) - len(doomed),
             "types": sorted({getattr(i, "type", "?") for i in items if i.id in removed}),
             "seconds": time.perf_counter() - started}
+
+
+def remove_items(conversation_id: str, item_ids) -> None:
+    """Deletes particular items (a blocked reply) from a stored conversation, so later turns don't build on it."""
+    client = _openai_client().with_options(timeout=TRIM_CALL_TIMEOUT_S, max_retries=0)
+    for item_id in item_ids:
+        client.conversations.items.delete(item_id, conversation_id=conversation_id)

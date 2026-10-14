@@ -78,7 +78,9 @@ def test_agent_is_called_by_name_with_server_side_conversation(monkeypatch):
     monkeypatch.setattr(foundry_agent, "_openai_client", lambda: FakeOpenAI())
     assert foundry_agent.new_conversation() == "conv_9"
     assert foundry_agent.ask("conv_9", "hi").text == "Hello there."
-    assert sent == {"conversation": "conv_9", "input": "hi",
+    assert sent == {"conversation": "conv_9",
+                    "input": [{"type": "message", "role": "system", "content": foundry_agent.SEARCH_REMINDER},
+                              {"type": "message", "role": "user", "content": "hi"}],
                     "extra_body": {"agent_reference": {"name": "clearview-glass-agent", "type": "agent_reference"}},
                     "max_output_tokens": 400, "max_tool_calls": 2, "truncation": "auto"}
 
@@ -513,3 +515,45 @@ def test_trim_stops_when_its_time_is_up(client, monkeypatch):
     monkeypatch.setattr(foundry_agent, "_openai_client", lambda: fake)
     r = client.post("/api/trim", json={"conversation_id": "conv_abc"}).json()
     assert r["removed"] == 1 and r["left"] == 2
+
+
+def test_a_figure_without_a_search_this_turn_is_not_spoken(client, monkeypatch):
+    removed = []
+    made_up = foundry_agent.Answer("For SGG Nano Silver in double glazing, the U-value is 1.0 watts per square metre "
+                                   "kelvin.", searched=False, message_ids=("msg_9",))
+    monkeypatch.setattr(foundry_agent, "ask", lambda *a, **k: made_up)
+    monkeypatch.setattr(foundry_agent, "remove_items", lambda cid, ids: removed.append((cid, ids)))
+    r = client.post("/api/chat", json={"conversation_id": "conv_x", "text": "Nano Silver."}).json()
+    assert r["guarded"] == "figure without a search" and "1.0" not in r["reply"]
+    assert removed == [("conv_x", ("msg_9",))]
+    searched = foundry_agent.Answer("Nano Silver Shine (KS 138 II) in double glazing has a U-value of 1.6.", searched=True)
+    monkeypatch.setattr(foundry_agent, "ask", lambda *a, **k: searched)
+    assert client.post("/api/chat", json={"conversation_id": "conv_x", "text": "Shine?"}).json()["guarded"] is None
+    assert main.guard_reply("The U-value is 1.6.", False, "Sorry, can you repeat that?")[1] is None   # a repeat
+    assert main.guard_reply("Do you mean single or double glazing?", False)[1] is None              # no figure
+    assert main.guard_reply("You're welcome. Thank you for calling.", False)[1] is None
+
+
+def test_stored_turns_carry_the_reminder_and_report_the_search(monkeypatch):
+    sent = {}
+    out = [NS(type="remote_function_call", id="fc_1"), NS(type="message", id="msg_2")]
+    fake = NS(responses=NS(create=lambda **kw: sent.update(kw) or NS(output_text="1.6", usage=None, output=out)))
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: fake)
+    monkeypatch.setattr(foundry_agent, "_limits_supported", True)
+    monkeypatch.setattr(foundry_agent, "_system_note_supported", True)
+    a = foundry_agent.ask("conv_x", "Nano Silver Shine U-value?")
+    assert a.searched is True and a.message_ids == ("msg_2",)
+    assert sent["conversation"] == "conv_x" and sent["input"][0]["role"] == "system"
+    assert sent["input"][-1] == {"type": "message", "role": "user", "content": "Nano Silver Shine U-value?"}
+
+
+def test_trim_also_removes_the_reminder(client, monkeypatch):
+    items = [NS(id="u", type="message", role="user"), NS(id="s", type="message", role="system"),
+             NS(id="a", type="message", role="assistant"), NS(id="f", type="remote_function_call")]
+    deleted = []
+    fake = NS(conversations=NS(items=NS(list=lambda cid, **kw: items,
+                                        delete=lambda item_id, conversation_id: deleted.append(item_id))))
+    fake.with_options = lambda **kw: fake
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: fake)
+    assert client.post("/api/trim", json={"conversation_id": "conv_abc"}).json()["removed"] == 2
+    assert sorted(deleted) == ["f", "s"]

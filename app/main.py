@@ -105,11 +105,23 @@ PRICE_REPLY = {"hi-IN": "कीमत की जानकारी हमार�
                None: "Our specialist will share the pricing with you. Shall I arrange a call back?"}
 
 
-def guard_reply(text: str) -> tuple[str, str | None]:
+# A performance figure is spoken only if this turn searched the brochures. gpt-4.1 once said "Nano Silver
+# U-value 1.0" (the brochure says 1.6) with no search at all, against the prompt.
+FIGURE_WORD = re.compile(r"(u[- ]?value|u-वैल्यू|यू-वैल्यू|solar factor|सोलर फैक्टर|shading coefficient|transmission|"
+                         r"reflection|vlt|let(s)? through|w/sq|watts? per)", re.IGNORECASE)
+FIGURE_NUMBER = re.compile(r"(\d+(\.\d+)?\s?(%|percent|प्रतिशत))|(\b\d\.\d+\b)")
+REPEAT = re.compile(r"(repeat|say (that|it) again|once more|again\?|फिर से|दोबारा|dobara|phir se)", re.IGNORECASE)
+UNSEARCHED_REPLY = {"hi-IN": "मैं इसे ब्रोशर में ठीक से देख लूँ। क्या आप प्रोडक्ट का नाम एक बार फिर बताएँगे?",
+                    None: "Let me check that properly in our brochure. Could you tell me the product name once more?"}
+
+
+def guard_reply(text: str, searched: bool | None = None, asked: str = "") -> tuple[str, str | None]:
     """Returns the reply to show and speak, and why it was replaced (None = unchanged)."""
+    lang = speech.language_of(text, None)
     if PRICE.search(text):
-        lang = speech.language_of(text, None)
         return PRICE_REPLY.get(lang, PRICE_REPLY[None]), "price"
+    if searched is False and FIGURE_WORD.search(text) and FIGURE_NUMBER.search(text) and not REPEAT.search(asked):
+        return UNSEARCHED_REPLY.get(lang, UNSEARCHED_REPLY[None]), "figure without a search"
     return text, None
 
 
@@ -142,9 +154,14 @@ def chat(body: ChatIn):
         llm = time.perf_counter() - started
         log.info("timing llm=%.0fms chars=%d history=%s input_tokens=%s cached=%s", llm * 1000, len(answer.text),
                  "stored" if history is None else f"text:{len(history)}", answer.input_tokens, answer.cached_tokens)
-        reply, guarded = guard_reply(answer.text)
+        reply, guarded = guard_reply(answer.text, answer.searched, body.text)
         if guarded:
             log.warning("reply replaced (%s): %r", guarded, answer.text[:300])
+            if body.conversation_id and answer.message_ids:   # keep the blocked reply out of the stored conversation
+                try:
+                    foundry_agent.remove_items(body.conversation_id, answer.message_ids)
+                except Exception as exc:
+                    log.warning("Could not remove the blocked reply: %s", exc)
         return JSONResponse({"reply": reply, "guarded": guarded, "agent": body.agent or settings.foundry_agent_name,
                              "timing": {"llm_ms": round(llm * 1000)},
                              "tokens": {"input": answer.input_tokens, "cached": answer.cached_tokens}},
