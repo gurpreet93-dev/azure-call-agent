@@ -93,7 +93,7 @@ let superseded = false;
 // The microphone must not keep listening after the call is over: it once picked up a whole work conversation in
 // the room after the caller said "thank you" and sent it to the agent. A goodbye ends the call, and so does a
 // minute with nobody speaking to the agent.
-const GOODBYE = /(thank you|thanks|thank u|bye|goodbye|that'?s all|धन्यवाद|शुक्रिया)[\s.!,।]*$/i;
+const GOODBYE = /(thank you|thanks|thank u|bye|goodbye|that'?s all|धन्यवाद|शुक्रिया)( (so|very) much)?( for (all|everything|your help|the help|the information|your time))?[\s.!,।]*$/i;
 const IDLE_STOP_MS = 60000;
 let lastActivity = 0;             // the caller said something new while the agent was working on the last turn
 // Foundry's stored conversation (default): each call is one conversation, shown as one thread with its totals in
