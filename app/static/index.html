@@ -379,11 +379,11 @@ async function send(text, marks) {
 }
 function interrupt() { if (speaking && finishSpeaking) finishSpeaking(true); }
 
-// Sentences said within a second of each other ("बताओ बताओ। अरे, गर्मी…") become one turn, not two agent calls.
+// Sentences said close together ("बताओ बताओ। अरे, गर्मी…") become one turn, not two agent calls.
 // Timing of the caller's side: lastWords = last partial result (≈ when they stopped talking, a little after),
 // recognized = Azure decided the sentence was over. The send then waits MERGE_MS for a follow-on sentence.
 // Azure has already waited for ~0.5 s of silence before "recognized", so a short extra wait is enough.
-const MERGE_MS = 1000;
+const MERGE_MS = 600;           // was 1000; on top of Azure's own silence wait it made every turn feel slow
 const MERGE_MS_DIGITS = 1800;     // numbers are read out in groups ("946599 ... 2500"), with longer pauses
 let heardBuffer = [], heardTimer = null, lastPartialAt = null;
 function queueUtterance(t, speechEnd, lastWords) {
