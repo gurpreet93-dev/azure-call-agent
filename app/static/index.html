@@ -89,9 +89,6 @@ let conversationId = null, busy = false, speaking = false, pending = null;
 const STORED_HISTORY = new URLSearchParams(location.search).get('history') === 'stored';
 const MAX_HISTORY = 80;             // messages (40 exchanges): enough for a full lead capture with read-backs
 let history = [];
-// One id per call, sent with every turn and stored in Foundry as metadata, so a call's traces can be found together.
-const newCallId = () => 'call-' + Math.random().toString(16).slice(2, 10);
-let callId = newCallId(), callIdShown = false;
 let finishSpeaking = null;          // ends the reply that is playing; true = interrupted
 let replyWords = new Set();         // words of the reply being spoken, to recognise our own echo
 const player = new Audio();
@@ -285,9 +282,7 @@ async function send(text, marks) {
   log('you', text);
   try {
     status('Thinking…');
-    const body = Object.assign(STORED_HISTORY ? {conversation_id: await ensureConversation(), text} : {history, text},
-                               {call_id: callId});
-    if (!callIdShown) { log('sys', 'Call ID: ' + callId + ' (search for it in Foundry traces).'); callIdShown = true; }
+    const body = STORED_HISTORY ? {conversation_id: await ensureConversation(), text} : {history, text};
     const t = Object.assign({}, marks, {sent: now()});
     const r = await api('/api/chat', body);
     const data = await r.json();
@@ -427,7 +422,7 @@ $('mic').onclick = async () => {
   }
 };
 $('typeform').onsubmit = (ev) => { ev.preventDefault(); const t = $('typed').value; $('typed').value = ''; send(t); };
-$('reset').onclick = () => { conversationId = null; history = []; callId = newCallId(); callIdShown = false; pending = null; interrupt(); $('log').innerHTML = '';
+$('reset').onclick = () => { conversationId = null; history = []; pending = null; interrupt(); $('log').innerHTML = '';
   log('sys', 'New conversation. The agent has forgotten the previous one.'); };
 $('lang').onchange = () => {
   log('sys', 'Language: ' + $('lang').selectedOptions[0].text + '.');

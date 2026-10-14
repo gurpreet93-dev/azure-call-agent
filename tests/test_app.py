@@ -41,7 +41,7 @@ def test_page_has_mic_language_picker_and_text_box(client):
 def test_conversation_chat_and_speak_go_to_foundry_and_speech(client, monkeypatch):
     calls = []
     monkeypatch.setattr(foundry_agent, "new_conversation", lambda: "conv_123")
-    monkeypatch.setattr(foundry_agent, "ask", lambda cid, text, history=None, call_id=None: calls.append((cid, text)) or foundry_agent.Answer("Namaste! Kaise madad karun?"))
+    monkeypatch.setattr(foundry_agent, "ask", lambda cid, text, history=None: calls.append((cid, text)) or foundry_agent.Answer("Namaste! Kaise madad karun?"))
     monkeypatch.setattr(speech, "synthesize_stream", fake_stream())
 
     cid = client.post("/api/conversation").json()["conversation_id"]
@@ -174,7 +174,7 @@ def test_speak_streams_with_timing_headers(client, monkeypatch):
 
 
 def test_chat_reports_llm_time(client, monkeypatch):
-    monkeypatch.setattr(foundry_agent, "ask", lambda cid, text, history=None, call_id=None: foundry_agent.Answer("Hi"))
+    monkeypatch.setattr(foundry_agent, "ask", lambda cid, text, history=None: foundry_agent.Answer("Hi"))
     r = client.post("/api/chat", json={"conversation_id": "c", "text": "hi"})
     assert r.json()["reply"] == "Hi" and isinstance(r.json()["timing"]["llm_ms"], int)
     assert r.headers["server-timing"].startswith("llm;dur=")
@@ -267,7 +267,7 @@ def test_rate_limit_gives_a_plain_message(client, monkeypatch):
     import httpx
     import openai
 
-    def limited(*a, **k):
+    def limited(*a):
         raise openai.RateLimitError("Error code: 429 - rate_limit_exceeded", response=httpx.Response(
             429, request=httpx.Request("POST", "https://x")), body=None)
     monkeypatch.setattr(foundry_agent, "ask", limited)
@@ -318,7 +318,7 @@ def test_agent_client_fails_fast_instead_of_waiting_out_rate_limits(monkeypatch)
 def test_agent_timeout_is_a_readable_error(client, monkeypatch):
     import openai as oa
 
-    def slow(*a, **k):
+    def slow(*a):
         raise oa.APITimeoutError(request=httpx.Request("POST", "https://x"))
 
     monkeypatch.setattr(foundry_agent, "ask", slow)
@@ -416,35 +416,3 @@ def test_search_tool_424_is_retried_once(monkeypatch):
         foundry_agent.ask(None, "Graphite single?", [])
     assert len(calls) == 2
     assert foundry_agent.ask(None, "Graphite single?", []).text == "0.43" and len(calls) == 3
-
-
-def test_every_turn_of_a_call_carries_its_call_id(client, monkeypatch):
-    sent = []
-    fake = NS(responses=NS(create=lambda **kw: sent.append(kw) or NS(output_text="ok", usage=None)))
-    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: fake)
-    monkeypatch.setattr(foundry_agent, "_limits_supported", True)
-    monkeypatch.setattr(foundry_agent, "_metadata_supported", True)
-    assert client.post("/api/chat", json={"history": [], "text": "hi", "call_id": "call-1a2b3c4d"}).status_code == 200
-    assert sent[-1]["metadata"] == {"call_id": "call-1a2b3c4d"}
-    assert client.post("/api/chat", json={"history": [], "text": "hi", "call_id": "bad id!"}).status_code == 422
-
-
-def test_call_id_is_dropped_if_the_agent_service_refuses_metadata(monkeypatch):
-    import openai
-    sent = []
-
-    def create(**kw):
-        sent.append(kw)
-        if "metadata" in kw:
-            raise openai.BadRequestError("Error code: 400 - Unsupported parameter: 'metadata'", response=httpx.Response(
-                400, request=httpx.Request("POST", "https://x")), body=None)
-        return NS(output_text="ok", usage=None)
-
-    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: NS(responses=NS(create=create)))
-    monkeypatch.setattr(foundry_agent, "_limits_supported", True)
-    monkeypatch.setattr(foundry_agent, "_metadata_supported", True)
-    monkeypatch.setattr(foundry_agent, "_system_note_supported", True)
-    assert foundry_agent.ask(None, "hi", [], call_id="call-1").text == "ok"
-    assert foundry_agent.ask(None, "again", [], call_id="call-1").text == "ok"
-    assert [("metadata" in k) for k in sent] == [True, False, False]
-    assert foundry_agent._system_note_supported                  # the system note was not blamed
