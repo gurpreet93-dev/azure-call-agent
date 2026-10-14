@@ -154,8 +154,12 @@ def ask(conversation_id: str | None, text: str, history: list[dict] | None = Non
         else (lambda: {"input": _text_history_input(history, text)})
     try:
         return _answer(_create(client, target(), agent))
-    except openai.BadRequestError as exc:          # the agent service refused the system note: put it in the turn
-        if not _system_note_supported or "input" not in str(exc):
+    except openai.BadRequestError as exc:
+        if history is None and HALF_PAIR in str(exc):  # a clean-up left half a search pair: repair, then ask again
+            if not repair_conversation(conversation_id):  # pairs not recognisable: clear every search item instead
+                trim_search_results(conversation_id)
+            return _answer(_create(client, target(), agent))
+        if not _system_note_supported or "input" not in str(exc):   # the system note refused: put it in the turn
             raise
         _system_note_supported = False
         return _answer(_create(client, target(), agent))
@@ -187,6 +191,72 @@ def ask_searching(conversation_id: str | None, text: str, history: list[dict] | 
 
 TRIM_CALL_TIMEOUT_S = 6
 TRIM_BUDGET_S = 7
+# A search is stored as a pair: the call and its output, linked by call_id. Foundry refuses to go on with a
+# conversation that holds one half ("No tool output found for remote function call ..."), which happened when a
+# clean-up deleted the output and ran out of time before the call. So pairs are deleted together, and any half
+# left behind is repaired before the next turn.
+HALF_PAIR = "No tool output found"
+PAIRED_CALLS = {"function_call", "remote_function_call", "custom_tool_call", "mcp_call"}
+
+
+def _is_output(item) -> bool:
+    return getattr(item, "type", "").endswith("_output")
+
+
+def _droppable(item) -> bool:
+    """Search calls, their results and the per-turn reminder; never the caller's words or the agent's answers."""
+    return getattr(item, "type", "message") != "message" or getattr(item, "role", None) == "system"
+
+
+def _groups(items) -> list[list]:
+    """Droppable items, each search call together with its output, outputs first."""
+    groups: dict[str, list] = {}
+    for item in items:
+        if _droppable(item):
+            groups.setdefault(getattr(item, "call_id", None) or item.id, []).append(item)
+    return [sorted(g, key=lambda i: not _is_output(i)) for g in groups.values()]
+
+
+def _halves(items) -> list:
+    """Call or output items whose partner is missing (left by an interrupted clean-up)."""
+    calls, outputs = {}, {}
+    for item in items:
+        cid = getattr(item, "call_id", None)
+        if not cid:
+            continue
+        if _is_output(item):
+            outputs[cid] = item
+        elif getattr(item, "type", "") in PAIRED_CALLS:
+            calls[cid] = item
+    return [calls[c] for c in calls.keys() - outputs.keys()] + [outputs[c] for c in outputs.keys() - calls.keys()]
+
+
+def _delete(client, conversation_id: str, item_id: str) -> None:
+    for attempt in range(3):     # one at a time: Foundry refuses simultaneous changes (412 "modified concurrently")
+        try:
+            client.conversations.items.delete(item_id, conversation_id=conversation_id)
+            return
+        except openai.APIStatusError as exc:
+            if exc.status_code == 404:                   # already gone
+                return
+            if exc.status_code != 412 or attempt == 2:
+                raise
+            time.sleep(0.2 * (attempt + 1))
+
+
+def _client_for_trim():
+    return _openai_client().with_options(timeout=TRIM_CALL_TIMEOUT_S, max_retries=0)
+
+
+def repair_conversation(conversation_id: str) -> int:
+    """Deletes half-deleted search pairs, so the conversation can go on. Returns how many items were removed."""
+    client = _client_for_trim()
+    halves = _halves(client.conversations.items.list(conversation_id, limit=100, order="desc"))
+    for item in halves:
+        _delete(client, conversation_id, item.id)
+    if halves:
+        log.warning("repaired %s: removed %d half-deleted search item(s)", conversation_id, len(halves))
+    return len(halves)
 
 
 def trim_search_results(conversation_id: str) -> dict:
@@ -196,38 +266,36 @@ def trim_search_results(conversation_id: str) -> dict:
     question cost about 2,900 more input tokens than the one before. Each turn's trace still records the results
     it used; only the copy in the conversation goes. Runs while the reply plays, so the caller doesn't wait."""
     started = time.perf_counter()
-    # The next question waits for this, and Foundry's deletes once took 30 s: each call gets a short limit and the
-    # whole clean-up stops after TRIM_BUDGET_S, leaving the rest (the next turn then carries a few extra tokens).
-    client = _openai_client().with_options(timeout=TRIM_CALL_TIMEOUT_S, max_retries=0)
+    # The next question waits for this, and Foundry's deletes once took 30 s: each call gets a short limit, and
+    # no new pair is started after TRIM_BUDGET_S (the next turn then carries a few extra tokens, nothing worse).
+    client = _client_for_trim()
     items = list(client.conversations.items.list(conversation_id, limit=100, order="desc"))
-    doomed = [i.id for i in items if getattr(i, "type", "message") != "message"
-              or getattr(i, "role", None) == "system"]          # search calls, results and the per-turn reminder
-    removed = []
-    # One at a time: Foundry refuses simultaneous changes to one conversation (412 "modified concurrently").
-    for item_id in doomed:
+    groups = _groups(items)
+    doomed = sum(len(g) for g in groups)
+    removed, repaired = [], 0
+    for item in _halves(items):                          # first finish anything an earlier clean-up left half done
+        _delete(client, conversation_id, item.id)
+        removed.append(item)
+        repaired += 1
+    done = {i.id for i in removed}
+    for group in groups:
+        group = [i for i in group if i.id not in done]
+        if not group:
+            continue
         if time.perf_counter() - started > TRIM_BUDGET_S:
             log.warning("trim stopped after %.1fs with %d item(s) left", time.perf_counter() - started,
-                        len(doomed) - len(removed))
+                        doomed - len(removed))
             break
-        for attempt in range(3):
-            try:
-                client.conversations.items.delete(item_id, conversation_id=conversation_id)
-                removed.append(item_id)
-                break
-            except openai.APIStatusError as exc:
-                if exc.status_code == 404:               # already gone
-                    removed.append(item_id)
-                    break
-                if exc.status_code != 412 or attempt == 2:
-                    raise
-                time.sleep(0.2 * (attempt + 1))
-    return {"removed": len(removed), "left": len(doomed) - len(removed), "kept": len(items) - len(doomed),
-            "types": sorted({getattr(i, "type", "?") for i in items if i.id in removed}),
+        for item in group:                               # a pair goes whole; a timeout here leaves a half that
+            _delete(client, conversation_id, item.id)    # repair_conversation() removes before the next turn
+            removed.append(item)
+    return {"removed": len(removed), "left": doomed - len(removed), "repaired": repaired,
+            "kept": len(items) - doomed, "types": sorted({getattr(i, "type", "?") for i in removed}),
             "seconds": time.perf_counter() - started}
 
 
 def remove_items(conversation_id: str, item_ids) -> None:
     """Deletes particular items (a blocked reply) from a stored conversation, so later turns don't build on it."""
-    client = _openai_client().with_options(timeout=TRIM_CALL_TIMEOUT_S, max_retries=0)
+    client = _client_for_trim()
     for item_id in item_ids:
-        client.conversations.items.delete(item_id, conversation_id=conversation_id)
+        _delete(client, conversation_id, item_id)

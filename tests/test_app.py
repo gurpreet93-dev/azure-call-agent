@@ -582,3 +582,81 @@ def test_required_search_is_sent_as_tool_choice(monkeypatch):
     a = foundry_agent.ask_searching("conv_x", "Lumina?")
     assert a.searched and sent["tool_choice"] == "required" and sent["conversation"] == "conv_x"
     assert [m["role"] for m in sent["input"]] == ["system"]       # the question is already in the conversation
+
+
+def _items_client(items, deleted, fail_on=None):
+    def delete(item_id, conversation_id):
+        if item_id == fail_on:
+            raise openai_timeout()
+        deleted.append(item_id)
+        items[:] = [i for i in items if i.id != item_id]
+    fake = NS(conversations=NS(items=NS(list=lambda cid, **kw: list(items), delete=delete)))
+    fake.with_options = lambda **kw: fake
+    return fake
+
+
+def openai_timeout():
+    import openai
+    return openai.APITimeoutError(request=httpx.Request("POST", "https://x"))
+
+
+def test_trim_deletes_a_search_call_and_its_output_together(client, monkeypatch):
+    items = [NS(id="out1", type="remote_function_call_output", call_id="c1"),
+             NS(id="call1", type="remote_function_call", call_id="c1"),
+             NS(id="note", type="message", role="system"), NS(id="ans", type="message", role="assistant")]
+    deleted = []
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: _items_client(items, deleted))
+    r = client.post("/api/trim", json={"conversation_id": "conv_abc"}).json()
+    assert r["removed"] == 3 and r["left"] == 0 and deleted.index("out1") < deleted.index("call1")
+
+
+def test_a_half_deleted_pair_is_repaired_first(client, monkeypatch):
+    items = [NS(id="call1", type="remote_function_call", call_id="c1"),      # its output is already gone
+             NS(id="ans", type="message", role="assistant")]
+    deleted = []
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: _items_client(items, deleted))
+    r = client.post("/api/trim", json={"conversation_id": "conv_abc"}).json()
+    assert deleted == ["call1"] and r["repaired"] == 1
+
+
+def test_a_turn_refused_for_half_a_pair_is_repaired_and_asked_again(monkeypatch):
+    import openai
+    calls, deleted = [], []
+    items = [NS(id="call9", type="remote_function_call", call_id="call_09f5")]
+
+    def create(**kw):
+        calls.append(kw)
+        if len(calls) == 1:
+            raise openai.BadRequestError("Error code: 400 - No tool output found for remote function call call_09f5.",
+                                         response=httpx.Response(400, request=httpx.Request("POST", "https://x")),
+                                         body=None)
+        return NS(output_text="Xtreme 70/33 II, 69%.", usage=None, output=[])
+
+    fake = _items_client(items, deleted)
+    fake.responses = NS(create=create)
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: fake)
+    monkeypatch.setattr(foundry_agent, "_limits_supported", True)
+    monkeypatch.setattr(foundry_agent, "_system_note_supported", True)
+    assert foundry_agent.ask("conv_x", "Which Xtreme lets in the most light?").text.startswith("Xtreme")
+    assert deleted == ["call9"] and len(calls) == 2
+
+
+def test_without_call_ids_the_refused_turn_clears_all_search_items(monkeypatch):
+    import openai
+    calls, deleted = [], []
+    items = [NS(id="call9", type="remote_function_call"), NS(id="ans", type="message", role="assistant")]
+
+    def create(**kw):
+        calls.append(kw)
+        if len(calls) == 1:
+            raise openai.BadRequestError("No tool output found for remote function call call_09f5.",
+                                         response=httpx.Response(400, request=httpx.Request("POST", "https://x")),
+                                         body=None)
+        return NS(output_text="ok", usage=None, output=[])
+
+    fake = _items_client(items, deleted)
+    fake.responses = NS(create=create)
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: fake)
+    monkeypatch.setattr(foundry_agent, "_limits_supported", True)
+    monkeypatch.setattr(foundry_agent, "_system_note_supported", True)
+    assert foundry_agent.ask("conv_x", "hi").text == "ok" and deleted == ["call9"]

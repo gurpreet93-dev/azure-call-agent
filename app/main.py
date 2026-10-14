@@ -139,7 +139,8 @@ def trim(body: TrimIn):
         raise HTTPException(502, f"Couldn't remove the search results: {exc}") from exc
     log.info("trim removed=%d kept=%d types=%s %.0fms", done["removed"], done["kept"], done["types"],
              done["seconds"] * 1000)
-    return {"removed": done["removed"], "left": done["left"], "kept": done["kept"], "types": done["types"],
+    return {"removed": done["removed"], "left": done["left"], "repaired": done["repaired"], "kept": done["kept"],
+            "types": done["types"],
             "ms": round(done["seconds"] * 1000)}
 
 
