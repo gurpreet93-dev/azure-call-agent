@@ -345,7 +345,7 @@ async function send(text, marks) {
       log('sys', 'Call ended (you said goodbye). The microphone is off; tap it to start again.');
     }
     const m = document.createElement('div'); m.className = 'meta';
-    m.textContent = 'voice: ' + res.via + (res.interrupted ? ' · interrupted' : '');
+    m.textContent = 'agent: ' + (data.agent || '?') + ' · voice: ' + res.via + (res.interrupted ? ' · interrupted' : '');
     bubble.appendChild(m);
     const tm = document.createElement('div'); tm.className = 'meta timing'; tm.textContent = timingText(t);
     bubble.appendChild(tm);

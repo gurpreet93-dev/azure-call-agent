@@ -145,7 +145,8 @@ def chat(body: ChatIn):
         reply, guarded = guard_reply(answer.text)
         if guarded:
             log.warning("reply replaced (%s): %r", guarded, answer.text[:300])
-        return JSONResponse({"reply": reply, "guarded": guarded, "timing": {"llm_ms": round(llm * 1000)},
+        return JSONResponse({"reply": reply, "guarded": guarded, "agent": body.agent or settings.foundry_agent_name,
+                             "timing": {"llm_ms": round(llm * 1000)},
                              "tokens": {"input": answer.input_tokens, "cached": answer.cached_tokens}},
                             headers={"Server-Timing": server_timing(llm=llm)})
     except openai.APITimeoutError as exc:
