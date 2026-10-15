@@ -679,6 +679,7 @@ def test_lead_row_marks_missing_details_and_keeps_leading_zeros():
 
 
 def test_a_call_with_no_name_or_mobile_saves_nothing(monkeypatch):
+    monkeypatch.setattr(leads, "settings", dataclasses.replace(leads.settings, lead_sheet_url="https://s/exec"))
     monkeypatch.setattr(leads, "transcript", lambda cid: [{"role": "user", "content": "U-value of Lumina?"}])
     monkeypatch.setattr(leads, "extract", lambda turns: {**{k: "" for k in LEAD}, "summary": "asked a U-value"})
     monkeypatch.setattr(leads, "post", lambda v: pytest.fail("nothing should be written"))
