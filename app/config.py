@@ -7,7 +7,7 @@ load_dotenv()  # reads .env from the working directory; real environment variabl
 
 
 # The Google Sheet's Apps Script web app ("ClearView Leads (demo)"). Empty = lead capture off.
-LEAD_SHEET_URL = ""
+LEAD_SHEET_URL = "https://script.google.com/macros/s/AKfycbzbMrFpA4rn_lXv8C-X5VsCo2T_jGDEaOt7R7zoM7ZZxsw6GHvJqXVpWBrDeQCaZ3c/exec"
 
 
 @dataclass(frozen=True)
