@@ -65,6 +65,7 @@
       <select id="agent" title="Which Foundry agent answers: same prompt, different search tool">
         <option value="" selected>Azure AI Search</option>
         <option value="clearview-glass-agent-filesearch">File search</option>
+        <option value="fosroc-agent">FOSROC (BuildRight)</option>
       </select>
       <label title="Listens while the agent talks and ignores its own voice by comparing words"><input type="checkbox" id="bargein" checked> Interrupt by speaking</label>
       <button id="reset">New conversation</button>
@@ -510,7 +511,8 @@ let session = null;   // {recognizer, stream, refresh}
 const PHRASES = ['U-value', 'solar factor', 'light transmission', 'internal reflection', 'external reflection',
   'single glazing', 'double glazing', 'double glazed unit', 'Saint-Gobain', 'ClearView', 'SGG', 'SGG Nano', 'Planitherm', 'Cool-lite',
   'Antelio Plus', 'Envision', 'Evolite', 'Evo Plus', 'Nano Silver', 'Nano Blue', 'Xtreme', 'Graphite',
-  'Icy Menthol', 'Pristine White', 'Lumina', 'Blue Frost', 'Sparkling Ice', 'Planilaque', 'Mira'];
+  'Icy Menthol', 'Pristine White', 'Lumina', 'Blue Frost', 'Sparkling Ice', 'Planilaque', 'Mira',
+  'Fosroc', 'Concure', 'Reebol', 'Reebaklens', 'curing compound', 'release agent', 'shuttering', 'formwork'];
 async function startSession() {
   const {token, region} = await (await api('/api/speech-token', null, 'GET')).json();
   const stream = await navigator.mediaDevices.getUserMedia(

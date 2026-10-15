@@ -17,7 +17,7 @@ class Settings:
     foundry_project_endpoint: str = os.getenv("FOUNDRY_PROJECT_ENDPOINT", "").strip().rstrip("/")
     foundry_agent_name: str = os.getenv("FOUNDRY_AGENT_NAME", "").strip()
     # Other Foundry agents the page may pick (comma-separated), e.g. the same agent on Foundry's File search.
-    other_agents: str = os.getenv("OTHER_AGENTS", "clearview-glass-agent-filesearch")
+    other_agents: str = os.getenv("OTHER_AGENTS", "clearview-glass-agent-filesearch,fosroc-agent")
     # Cap on each reply's length. Spoken replies are 1-3 sentences; the cap also keeps each request's
     # tokens-per-minute charge small.
     agent_max_output_tokens: int = int(os.getenv("AGENT_MAX_OUTPUT_TOKENS", "400"))
