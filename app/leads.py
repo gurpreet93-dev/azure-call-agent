@@ -68,7 +68,7 @@ def transcript(conversation_id: str) -> list[dict]:
 def extract(turns: list[dict]) -> dict:
     lines = "\n".join(("Caller: " if t["role"] == "user" else "Natasha: ") + t["content"] for t in turns)
     r = foundry_agent._openai_client().responses.create(
-        model=settings.lead_model, input=[{"role": "system", "content": EXTRACT}, {"role": "user", "content": lines}],
+        model=settings.lead_model, input=[foundry_agent._message("system", EXTRACT), foundry_agent._message("user", lines)],
         text={"format": {"type": "json_schema", "name": "lead", "schema": SCHEMA, "strict": True}},
         max_output_tokens=500)
     data = json.loads(r.output_text)

@@ -740,3 +740,14 @@ def test_only_the_first_reply_message_is_used_and_the_rest_are_dropped(client, m
     r = client.post("/api/chat", json={"conversation_id": "conv_x", "text": "Yes."})
     assert r.json()["reply"] == "Could you share your email?"
     assert removed == ["msg_2", "msg_3"]
+
+
+def test_lead_extraction_sends_typed_messages(monkeypatch):
+    # Foundry's endpoint refuses input items without "type": "message" (400 "Invalid value: ''").
+    sent = {}
+    resp = NS(output_text='{"name":"A","mobile":"1","email":"","address":"","city":"","district":"","pincode":"",'
+                          '"requirement":"","product":"","language":"English","summary":"s"}')
+    monkeypatch.setattr(foundry_agent, "_openai_client",
+                        lambda: NS(responses=NS(create=lambda **kw: sent.update(kw) or resp)))
+    lead = leads.extract([{"role": "user", "content": "I'm A, 1"}])
+    assert lead["name"] == "A" and all(m["type"] == "message" for m in sent["input"])

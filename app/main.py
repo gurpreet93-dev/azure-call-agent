@@ -217,7 +217,7 @@ def save_lead(body: LeadIn):
         raise HTTPException(503, str(exc)) from exc
     except Exception as exc:
         log.warning("Lead not saved: %s", exc)
-        raise HTTPException(502, "Lead not saved: " + str(exc)) from exc
+        raise HTTPException(502, str(exc)) from exc
 
 
 @app.post("/api/speak")
