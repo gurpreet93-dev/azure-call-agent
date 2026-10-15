@@ -166,6 +166,12 @@ def chat(body: ChatIn):
         llm = time.perf_counter() - started
         log.info("timing llm=%.0fms chars=%d history=%s input_tokens=%s cached=%s", llm * 1000, len(answer.text),
                  "stored" if history is None else f"text:{len(history)}", answer.input_tokens, answer.cached_tokens)
+        if body.conversation_id and answer.extra_ids:        # extra reply messages: out of the stored history,
+            try:                                              # or the next turns copy the repetition
+                foundry_agent.remove_items(body.conversation_id, answer.extra_ids)
+                log.warning("dropped %d extra reply message(s)", len(answer.extra_ids))
+            except Exception as exc:
+                log.warning("Could not remove extra reply messages: %s", exc)
         reply, guarded = guard_reply(answer.text, answer.searched, body.text)
         if guarded:
             log.warning("reply replaced (%s): %r", guarded, answer.text[:300])

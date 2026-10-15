@@ -73,10 +73,12 @@ _limits_supported = True
 # searching and answered "no confirmed information" (seen in traces). The reminder goes with every turn, after the
 # caller's message: placed before it, gpt-4.1 still skipped searches once old results were deleted. Foundry's own
 # File search note sits after the message, and that agent searched on every turn.
-SEARCH_REMINDER = ("Search the knowledge base for the caller's message above before stating any product fact, "
-                   "even if an earlier "
-                   "answer in this conversation covers it. Earlier answers are not search results. Only when the "
-                   "caller asks you to repeat, repeat your last answer exactly, without searching.")
+# Worded for product questions only: as a blanket "search before any product fact" it made the agent search on
+# lead-capture turns (after a pincode it listed window glass types instead of confirming the details).
+SEARCH_REMINDER = ("If the caller's message above asks about a product, search the knowledge base before stating "
+                   "any product fact, even if an earlier answer in this conversation covers it; earlier answers are "
+                   "not search results. Otherwise don't search: reply once, briefly, and carry on collecting the "
+                   "caller's details. When the caller asks you to repeat, repeat your last answer exactly.")
 
 
 @dataclass
@@ -86,13 +88,28 @@ class Answer:
     cached_tokens: int | None = None
     searched: bool | None = None          # did this turn call a tool (a search)? None = unknown
     message_ids: tuple[str, ...] = ()     # the reply's items, to take a blocked reply out of the conversation
+    extra_ids: tuple[str, ...] = ()       # further reply messages in the same turn, dropped (see _answer)
+
+
+def _message_text(item) -> str:
+    return "".join(getattr(p, "text", "") or "" for p in (getattr(item, "content", None) or [])).strip()
 
 
 def _answer(response) -> Answer:
+    """The turn's reply. On lead-capture turns the agent sometimes returned the same question two to four times
+    as separate messages, or ran ahead ("Is that correct?" then "What's your address?"). Only the first message
+    is the reply; the others are returned in extra_ids so they can be deleted from the stored conversation."""
     usage = getattr(response, "usage", None)
     details = getattr(usage, "input_tokens_details", None)
     output = getattr(response, "output", None)
     searched = None if output is None else any(getattr(i, "type", "message") != "message" for i in output)
+    messages = [i for i in (output or []) if getattr(i, "type", "") == "message" and _message_text(i)]
+    if len(messages) > 1:
+        first = messages[0]
+        return Answer(_message_text(first), getattr(usage, "input_tokens", None),
+                      getattr(details, "cached_tokens", None), searched,
+                      tuple(i for i in [getattr(first, "id", None)] if i),
+                      tuple(m.id for m in messages[1:] if getattr(m, "id", None)))
     ids = tuple(i.id for i in (output or []) if getattr(i, "type", "") == "message" and getattr(i, "id", None))
     return Answer((response.output_text or "").strip(), getattr(usage, "input_tokens", None),
                   getattr(details, "cached_tokens", None), searched, ids)

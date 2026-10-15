@@ -726,3 +726,17 @@ def test_lead_transcript_keeps_only_spoken_turns(monkeypatch):
     monkeypatch.setattr(foundry_agent, "_openai_client", lambda: fake)
     assert leads.transcript("conv_1") == [{"role": "user", "content": "I'm Gurpreet"},
                                           {"role": "assistant", "content": "Thanks, Gurpreet."}]
+
+
+def test_only_the_first_reply_message_is_used_and_the_rest_are_dropped(client, monkeypatch):
+    msg = lambda i, text: NS(id=f"msg_{i}", type="message", content=[NS(text=text)])
+    out = [msg(1, "Could you share your email?"), msg(2, "Could you share your email?"), msg(3, "And your address?")]
+    resp = NS(output_text="Could you share your email?Could you share your email?And your address?",
+              usage=None, output=out)
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: NS(responses=NS(create=lambda **kw: resp)))
+    monkeypatch.setattr(foundry_agent, "_limits_supported", True)
+    removed = []
+    monkeypatch.setattr(foundry_agent, "remove_items", lambda cid, ids: removed.extend(ids))
+    r = client.post("/api/chat", json={"conversation_id": "conv_x", "text": "Yes."})
+    assert r.json()["reply"] == "Could you share your email?"
+    assert removed == ["msg_2", "msg_3"]
