@@ -6,6 +6,10 @@ from dotenv import load_dotenv
 load_dotenv()  # reads .env from the working directory; real environment variables win
 
 
+# The Google Sheet's Apps Script web app ("ClearView Leads (demo)"). Empty = lead capture off.
+LEAD_SHEET_URL = ""
+
+
 @dataclass(frozen=True)
 class Settings:
     # The agent (instructions + knowledge) lives in Microsoft Foundry; the app only references it.
@@ -34,6 +38,14 @@ class Settings:
     # (sign-in: managed identity); Vercel sets VERCEL (sign-in: service principal via AZURE_TENANT_ID,
     # AZURE_CLIENT_ID, AZURE_CLIENT_SECRET).
     on_server: bool = bool(os.getenv("WEBSITE_SITE_NAME") or os.getenv("VERCEL"))
+
+    # Lead capture: when a call ends, a row goes to a Google Sheet through an Apps Script web app bound to it.
+    # The script URL is public in this repo, so the script also checks a token: the site password by default,
+    # which lives only in the server's environment.
+    lead_sheet_url: str = os.getenv("LEAD_SHEET_URL", LEAD_SHEET_URL).strip()
+    lead_sheet_token: str = (os.getenv("LEAD_SHEET_TOKEN") or os.getenv("APP_PASSWORD") or "").strip()
+    # Model deployment that reads the finished call and returns the lead's fields.
+    lead_model: str = os.getenv("LEAD_MODEL", "gpt-4.1").strip()
 
 
 settings = Settings()

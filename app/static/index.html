@@ -150,6 +150,36 @@ async function ensureConversation() {
       .finally(() => { creating = null; });
   return creating;
 }
+// ---------- lead capture: when a call ends, the caller's details go to the leads sheet ----------
+// The server reads the call, pulls out name, mobile, email, address and requirement, and adds a row (or updates
+// this call's row). It runs on goodbye, on "New conversation", after a silent minute and when the page closes.
+let callTurns = 0;                   // answered turns in this conversation
+const leadSavedAt = new Map();       // conversation -> callTurns when its lead was last saved
+function leadBody() {
+  if (STORED_HISTORY) return conversationId ? {conversation_id: conversationId} : null;
+  return history.length ? {history} : null;
+}
+async function saveLead(why) {
+  const body = leadBody(), key = body && (body.conversation_id || 'text');
+  if (!body || !callTurns || (leadSavedAt.get(key) || 0) >= callTurns) return;
+  leadSavedAt.set(key, callTurns);
+  try {
+    const d = await (await api('/api/lead', body)).json();
+    if (!d.saved) return log('sys', 'No lead saved (' + why + '): ' + d.reason + '.');
+    log('sys', 'Lead ' + (d.updated ? 'updated' : 'saved') + ' in the sheet (' + why + '): ' +
+        [d.lead.name, d.lead.mobile, d.lead.city].filter(Boolean).join(', ') +
+        (d.complete ? ' · complete' : ' · missing: ' + d.missing.join(', ')));
+  } catch (e) {
+    leadSavedAt.delete(key);
+    log('sys err', 'Lead not saved: ' + e.message);
+  }
+}
+window.addEventListener('pagehide', () => {     // closing the tab mid-call still saves what was collected
+  const body = leadBody(), key = body && (body.conversation_id || 'text');
+  if (body && callTurns && (leadSavedAt.get(key) || 0) < callTurns)
+    navigator.sendBeacon('/api/lead', new Blob([JSON.stringify(body)], {type: 'application/json'}));
+});
+
 function prepareConversation() { if (STORED_HISTORY) ensureConversation().catch(() => {}); }
 const words = (t) => t.toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
 function isEcho(heard) {            // mostly the reply's own words = the agent heard through the speakers
@@ -381,6 +411,7 @@ async function send(text, marks, shown = false) {
     clearTimeout(fillerTimer);
     const data = await r.json();
     const reply = data.reply || '(no reply)';
+    callTurns++;
     t.llmDone = now(); t.server = serverTiming(r); t.tokens = data.tokens;
     const spoken = reply.replace(/【[^】]*】/g, '');
     if (!STORED_HISTORY && data.reply) {           // markers point at search results the next turn won't have
@@ -420,6 +451,7 @@ async function send(text, marks, shown = false) {
       stopSession();
       log('sys', 'Call ended (you said goodbye). The microphone is off; tap it to start again.');
     }
+    if (endsCall && !res.interrupted) saveLead('call ended');      // typed goodbyes end the call too
     const m = document.createElement('div'); m.className = 'meta';
     m.textContent = 'agent: ' + (data.agent || '?') + ' · voice: ' + res.via + (res.interrupted ? ' · interrupted' : '') +
                     (said ? ' · said "' + said.text + '" at ' + ((t.filler - t.sent) / 1000).toFixed(1) + ' s' : '');
@@ -522,6 +554,7 @@ async function startSession() {
     if (!busy && !speaking && now() - lastActivity > IDLE_STOP_MS) {
       stopSession();
       log('sys', 'Stopped listening after a minute of silence. Tap the microphone to talk again.');
+      saveLead('a minute of silence');
     }
   }, 5000);
   session = {recognizer, stream, refresh, idle};
@@ -567,10 +600,10 @@ $('mic').onclick = async () => {
   }
 };
 $('typeform').onsubmit = (ev) => { ev.preventDefault(); const t = $('typed').value; $('typed').value = ''; send(t); };
-$('reset').onclick = () => { conversationId = null; setTimeout(prepareConversation, 0); history = []; pending = null; interrupt(); $('log').innerHTML = '';
+$('reset').onclick = () => { saveLead('new conversation'); callTurns = 0; conversationId = null; setTimeout(prepareConversation, 0); history = []; pending = null; interrupt(); $('log').innerHTML = '';
   log('sys', 'New conversation. The agent has forgotten the previous one.'); };
 $('agent').onchange = () => {       // a new agent starts a new conversation, so each Foundry thread has one agent
-  conversationId = null; setTimeout(prepareConversation, 0); history = []; pending = null; interrupt();
+  saveLead('new conversation'); callTurns = 0; conversationId = null; setTimeout(prepareConversation, 0); history = []; pending = null; interrupt();
   log('sys', 'Knowledge: ' + $('agent').selectedOptions[0].text + '. New conversation started.');
 };
 $('lang').onchange = () => {

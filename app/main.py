@@ -15,7 +15,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from app import foundry_agent, speech
+from app import foundry_agent, leads, speech
 from app.config import settings
 
 log = logging.getLogger(__name__)
@@ -57,6 +57,17 @@ class ChatIn(BaseModel):
     def one_kind_of_history(self):
         if self.history is None and not self.conversation_id:
             raise ValueError("send either history (may be empty) or conversation_id")
+        return self
+
+
+class LeadIn(BaseModel):
+    conversation_id: str | None = Field(default=None, pattern=r"^conv_[A-Za-z0-9_-]{1,200}$")
+    history: list[Turn] | None = Field(default=None, max_length=100)   # text-only history mode
+
+    @model_validator(mode="after")
+    def one_source(self):
+        if self.history is None and not self.conversation_id:
+            raise ValueError("send conversation_id or history")
         return self
 
 
@@ -186,6 +197,21 @@ def chat(body: ChatIn):
     except Exception as exc:
         log.exception("Foundry agent call failed")
         raise HTTPException(502, f"The Foundry agent didn't answer: {exc}") from exc
+
+
+@app.post("/api/lead")
+def save_lead(body: LeadIn):
+    """End of a call: adds the caller's details to the leads sheet (or updates this call's row)."""
+    try:
+        turns = [t.model_dump() for t in body.history] if body.history is not None else None
+        return leads.save(body.conversation_id, turns)
+    except leads.LeadSheetNotConfigured as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except foundry_agent.AgentNotConfigured as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except Exception as exc:
+        log.warning("Lead not saved: %s", exc)
+        raise HTTPException(502, "Lead not saved: " + str(exc)) from exc
 
 
 @app.post("/api/speak")

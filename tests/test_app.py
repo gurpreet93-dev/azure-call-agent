@@ -660,3 +660,68 @@ def test_without_call_ids_the_refused_turn_clears_all_search_items(monkeypatch):
     monkeypatch.setattr(foundry_agent, "_limits_supported", True)
     monkeypatch.setattr(foundry_agent, "_system_note_supported", True)
     assert foundry_agent.ask("conv_x", "hi").text == "ok" and deleted == ["call9"]
+
+
+# ---------- lead capture ----------
+from app import leads
+
+LEAD = {"name": "Gurpreet", "mobile": "09876543210", "email": "g@example.com", "address": "12 MG Road",
+        "city": "Pune", "district": "Pune", "pincode": "411001", "requirement": "office windows",
+        "product": "", "language": "English", "summary": "Wants glass for office windows."}
+
+
+def test_lead_row_marks_missing_details_and_keeps_leading_zeros():
+    v = leads.row({**LEAD, "email": "", "district": ""}, "conv_1")
+    assert v["Complete"] == "no" and v["Missing"] == "email, district"
+    assert v["Mobile"] == "'09876543210" and v["Pincode"] == "'411001" and v["Conversation ID"] == "conv_1"
+    assert leads.row(LEAD, "conv_1")["Complete"] == "yes"            # product is optional
+    assert list(v) == leads.HEADERS
+
+
+def test_a_call_with_no_name_or_mobile_saves_nothing(monkeypatch):
+    monkeypatch.setattr(leads, "transcript", lambda cid: [{"role": "user", "content": "U-value of Lumina?"}])
+    monkeypatch.setattr(leads, "extract", lambda turns: {**{k: "" for k in LEAD}, "summary": "asked a U-value"})
+    monkeypatch.setattr(leads, "post", lambda v: pytest.fail("nothing should be written"))
+    assert leads.save("conv_1") == {"saved": False, "reason": "no lead details in this call (no name or mobile number)"}
+
+
+def test_a_lead_is_posted_to_the_sheet_with_the_token(monkeypatch):
+    sent = {}
+    monkeypatch.setattr(leads, "settings", dataclasses.replace(leads.settings, lead_sheet_url="https://script.example/exec",
+                                                               lead_sheet_token="pw"))
+    monkeypatch.setattr(leads, "transcript", lambda cid: [{"role": "user", "content": "I'm Gurpreet"}])
+    monkeypatch.setattr(leads, "extract", lambda turns: dict(LEAD))
+    def fake_post(url, json, **kw):
+        sent.update(url=url, body=json)
+        return httpx.Response(200, json={"ok": True, "updated": False}, request=httpx.Request("POST", url))
+    monkeypatch.setattr(leads.httpx, "post", fake_post)
+    r = leads.save("conv_1")
+    assert r["saved"] and r["complete"] and not r["updated"]
+    assert sent["url"] == "https://script.example/exec" and sent["body"]["token"] == "pw"
+    assert sent["body"]["row"]["Name"] == "Gurpreet"
+
+
+def test_lead_endpoint_reports_a_missing_sheet_and_a_refused_row(client, monkeypatch):
+    monkeypatch.setattr(leads, "settings", dataclasses.replace(leads.settings, lead_sheet_url=""))
+    monkeypatch.setattr(leads, "transcript", lambda cid: [{"role": "user", "content": "I'm Gurpreet"}])
+    monkeypatch.setattr(leads, "extract", lambda turns: dict(LEAD))
+    r = client.post("/api/lead", json={"conversation_id": "conv_abc"})
+    assert r.status_code == 503 and "LEAD_SHEET_URL" in r.json()["detail"]
+    monkeypatch.setattr(leads, "settings", dataclasses.replace(leads.settings, lead_sheet_url="https://s/exec"))
+    monkeypatch.setattr(leads.httpx, "post", lambda url, **kw: httpx.Response(
+        200, json={"ok": False, "error": "bad token"}, request=httpx.Request("POST", url)))
+    r = client.post("/api/lead", json={"conversation_id": "conv_abc"})
+    assert r.status_code == 502 and "bad token" in r.json()["detail"]
+    assert client.post("/api/lead", json={"conversation_id": "not-a-conv"}).status_code == 422
+    assert client.post("/api/lead", json={}).status_code == 422
+
+
+def test_lead_transcript_keeps_only_spoken_turns(monkeypatch):
+    msg = lambda role, text, i: NS(id=f"i{i}", type="message", role=role, content=[NS(text=text)])
+    page = NS(data=[msg("system", "Search the knowledge base", 1), msg("user", "I'm Gurpreet", 2),
+                    NS(id="i3", type="remote_function_call", role=None, content=None),
+                    msg("assistant", "Thanks, Gurpreet【0†source】.", 4)], has_more=False)
+    fake = NS(conversations=NS(items=NS(list=lambda cid, **kw: page)))
+    monkeypatch.setattr(foundry_agent, "_openai_client", lambda: fake)
+    assert leads.transcript("conv_1") == [{"role": "user", "content": "I'm Gurpreet"},
+                                          {"role": "assistant", "content": "Thanks, Gurpreet."}]
